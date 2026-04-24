@@ -15,6 +15,7 @@ import json
 import uuid
 import secrets
 import httpx
+import asyncio
 from datetime import datetime, timezone, timedelta
 from pydantic import BaseModel, Field
 from typing import List, Optional
@@ -98,6 +99,12 @@ class TelemetryInput(BaseModel):
     gyroscope_z: float
     g_force: float
 
+class ImpactSimulationInput(BaseModel):
+    severity: str = Field(default="medium")
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
+    countdown_seconds: int = Field(default=10, ge=0, le=60)
+
 # ─── Auth Helpers ───
 
 def hash_password(password: str) -> str:
@@ -156,6 +163,38 @@ def classify_severity(g_force: float) -> str:
 
 def severity_label(sev: str) -> str:
     return {"low": "Bajo", "medium": "Medio", "high": "Alto", "critical": "Crítico"}.get(sev, sev)
+
+def simulate_impact_from_severity(severity: str) -> ImpactInput:
+    sev = severity.lower().strip()
+    presets = {
+        "low": {"g_min": 1.2, "g_max": 2.2, "gyro": 80},
+        "medium": {"g_min": 2.3, "g_max": 4.8, "gyro": 180},
+        "high": {"g_min": 4.9, "g_max": 7.5, "gyro": 320},
+        "critical": {"g_min": 7.6, "g_max": 12.0, "gyro": 520},
+    }
+    if sev not in presets:
+        raise HTTPException(status_code=400, detail="Severidad inválida. Usa: low, medium, high, critical")
+
+    p = presets[sev]
+
+    def rand(min_v: float, max_v: float) -> float:
+        return min_v + (max_v - min_v) * (secrets.randbelow(10000) / 10000)
+
+    def signed(v: float) -> float:
+        return v if secrets.randbelow(2) else -v
+
+    g_force = rand(p["g_min"], p["g_max"])
+    return ImpactInput(
+        acceleration_x=signed(rand(0.2, g_force * 0.6)),
+        acceleration_y=signed(rand(0.2, g_force * 0.7)),
+        acceleration_z=rand(0.8, max(1.0, g_force)),
+        gyroscope_x=signed(rand(0, p["gyro"])),
+        gyroscope_y=signed(rand(0, p["gyro"])),
+        gyroscope_z=signed(rand(0, p["gyro"])),
+        g_force=g_force,
+        latitude=None,
+        longitude=None,
+    )
 
 # ─── Auth Routes ───
 
@@ -333,8 +372,13 @@ async def get_impact(impact_id: str, user: dict = Depends(get_current_user)):
         raise HTTPException(status_code=404, detail="Evento no encontrado")
     return impact
 
-@api_router.post("/impacts")
-async def create_impact(body: ImpactInput, user: dict = Depends(get_current_user)):
+async def process_impact_event(
+    body: ImpactInput,
+    user: dict,
+    *,
+    simulation: bool = False,
+    simulation_countdown_seconds: int = 0,
+):
     severity = classify_severity(body.g_force)
     impact_id = str(uuid.uuid4())
     impact_doc = {
@@ -346,6 +390,7 @@ async def create_impact(body: ImpactInput, user: dict = Depends(get_current_user
         "severity": severity,
         "severity_label": severity_label(severity),
         "location": {"latitude": body.latitude, "longitude": body.longitude} if body.latitude else None,
+        "simulation": simulation,
         "ai_diagnosis": None,
         "alerts_sent": False,
         "created_at": datetime.now(timezone.utc).isoformat()
@@ -372,6 +417,8 @@ async def create_impact(body: ImpactInput, user: dict = Depends(get_current_user
     # Send alerts if above threshold
     if body.g_force >= threshold:
         try:
+            if simulation and simulation_countdown_seconds > 0:
+                await asyncio.sleep(simulation_countdown_seconds)
             await send_emergency_alerts(user, impact_doc, profile, diagnosis)
             await db.impact_events.update_one({"id": impact_id}, {"$set": {"alerts_sent": True}})
             impact_doc["alerts_sent"] = True
@@ -379,7 +426,28 @@ async def create_impact(body: ImpactInput, user: dict = Depends(get_current_user
             logger.error(f"Alert sending failed: {e}")
 
     impact_doc.pop("_id", None)
+    if simulation:
+        impact_doc["simulation_countdown_seconds"] = simulation_countdown_seconds
     return impact_doc
+
+@api_router.post("/impacts")
+async def create_impact(body: ImpactInput, user: dict = Depends(get_current_user)):
+    return await process_impact_event(body, user, simulation=False)
+
+@api_router.post("/impacts/simulate")
+async def simulate_impact_process(body: ImpactSimulationInput, user: dict = Depends(get_current_user)):
+    if user.get("role") != "dev":
+        raise HTTPException(status_code=403, detail="Solo cuentas con rol dev pueden simular el flujo completo")
+
+    simulated = simulate_impact_from_severity(body.severity)
+    simulated.latitude = body.latitude
+    simulated.longitude = body.longitude
+    return await process_impact_event(
+        simulated,
+        user,
+        simulation=True,
+        simulation_countdown_seconds=body.countdown_seconds,
+    )
 
 # ─── Settings Routes ───
 

@@ -69,6 +69,8 @@ export const impactsAPI = {
     apiRequest(`/impacts/${id}`, { token }),
   create: (token: string, data: any) =>
     apiRequest('/impacts', { method: 'POST', body: data, token }),
+  simulate: (token: string, data: { severity: 'low' | 'medium' | 'high' | 'critical'; latitude?: number; longitude?: number; countdown_seconds?: number }) =>
+    apiRequest('/impacts/simulate', { method: 'POST', body: data, token }),
 };
 
 // Settings

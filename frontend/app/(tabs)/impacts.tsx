@@ -1,13 +1,12 @@
 import React, { useState, useCallback } from 'react';
 import {
-  View, Text, TouchableOpacity, StyleSheet, FlatList, RefreshControl, ActivityIndicator,
+  View, Text, TouchableOpacity, StyleSheet, FlatList, RefreshControl, ActivityIndicator, Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { useAuth } from '../../src/context/AuthContext';
 import { impactsAPI } from '../../src/services/api';
-import { bluetoothService } from '../../src/services/bluetooth';
 import { useAppSettings } from '../../src/context/AppSettingsContext';
 import { COLORS, RADIUS, SPACING } from '../../src/theme';
 
@@ -19,7 +18,7 @@ function sevColor(s: string) {
 }
 
 export default function ImpactsScreen() {
-  const { token } = useAuth();
+  const { token, user } = useAuth();
   const router = useRouter();
   const { developerMode } = useAppSettings();
   const [impacts, setImpacts] = useState<any[]>([]);
@@ -40,23 +39,22 @@ export default function ImpactsScreen() {
 
   const simulateImpact = async (severity: 'low' | 'medium' | 'high' | 'critical') => {
     if (!token) return;
+    if (user?.role !== 'dev') {
+      Alert.alert('Acceso restringido', 'La simulación completa solo está disponible para cuentas con rol dev.');
+      return;
+    }
     setSimulating(true);
     try {
-      const data = bluetoothService.simulateImpact(severity);
-      const newImpact = await impactsAPI.create(token, {
-        acceleration_x: data.acceleration_x,
-        acceleration_y: data.acceleration_y,
-        acceleration_z: data.acceleration_z,
-        gyroscope_x: data.gyroscope_x,
-        gyroscope_y: data.gyroscope_y,
-        gyroscope_z: data.gyroscope_z,
-        g_force: data.g_force,
+      const newImpact = await impactsAPI.simulate(token, {
+        severity,
         latitude: 19.4326,
         longitude: -99.1332,
+        countdown_seconds: 10,
       });
       setImpacts((prev) => [newImpact, ...prev]);
+      Alert.alert('Simulación ejecutada', 'Se completó el flujo con conteo previo y envío de alerta por WhatsApp Business.');
     } catch (e: any) {
-      console.error(e);
+      Alert.alert('Error al simular', e?.message || 'No fue posible ejecutar la simulación');
     } finally { setSimulating(false); }
   };
 
@@ -100,7 +98,7 @@ export default function ImpactsScreen() {
       </View>
 
       {/* Simulate buttons only in developer mode */}
-      {developerMode && (
+      {developerMode && user?.role === 'dev' && (
         <View style={styles.simSection}>
           <View style={styles.simHeader}>
             <Ionicons name="construct" size={14} color={COLORS.warning} />
