@@ -1,6 +1,6 @@
 import React, { useState, useCallback } from 'react';
 import {
-  View, Text, TouchableOpacity, StyleSheet, FlatList, RefreshControl, ActivityIndicator,
+  View, Text, TouchableOpacity, StyleSheet, FlatList, RefreshControl, ActivityIndicator, Modal,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -26,6 +26,10 @@ export default function ImpactsScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [simulating, setSimulating] = useState(false);
+  const [countdownVisible, setCountdownVisible] = useState(false);
+  const [countdown, setCountdown] = useState(10);
+  const [pendingTelemetry, setPendingTelemetry] = useState<any>(null);
+  const [pendingSeverity, setPendingSeverity] = useState<'low' | 'medium' | 'high' | 'critical' | null>(null);
 
   const fetchImpacts = useCallback(async () => {
     if (!token) return;
@@ -38,27 +42,61 @@ export default function ImpactsScreen() {
 
   useFocusEffect(useCallback(() => { fetchImpacts(); }, [fetchImpacts]));
 
-  const simulateImpact = async (severity: 'low' | 'medium' | 'high' | 'critical') => {
-    if (!token) return;
-    setSimulating(true);
+  const executeImpactCreation = useCallback(async (telemetryData: any) => {
+    if (!token || !telemetryData) return;
     try {
-      const data = bluetoothService.simulateImpact(severity);
       const newImpact = await impactsAPI.create(token, {
-        acceleration_x: data.acceleration_x,
-        acceleration_y: data.acceleration_y,
-        acceleration_z: data.acceleration_z,
-        gyroscope_x: data.gyroscope_x,
-        gyroscope_y: data.gyroscope_y,
-        gyroscope_z: data.gyroscope_z,
-        g_force: data.g_force,
+        acceleration_x: telemetryData.acceleration_x,
+        acceleration_y: telemetryData.acceleration_y,
+        acceleration_z: telemetryData.acceleration_z,
+        gyroscope_x: telemetryData.gyroscope_x,
+        gyroscope_y: telemetryData.gyroscope_y,
+        gyroscope_z: telemetryData.gyroscope_z,
+        g_force: telemetryData.g_force,
         latitude: 19.4326,
         longitude: -99.1332,
       });
       setImpacts((prev) => [newImpact, ...prev]);
-    } catch (e: any) {
+    } catch (e) {
       console.error(e);
-    } finally { setSimulating(false); }
+    }
+  }, [token]);
+
+  const simulateImpact = (severity: 'low' | 'medium' | 'high' | 'critical') => {
+    const telemetryData = bluetoothService.simulateImpact(severity);
+    setPendingTelemetry(telemetryData);
+    setPendingSeverity(severity);
+    setCountdown(10);
+    setCountdownVisible(true);
   };
+
+  const cancelEmergency = () => {
+    setCountdownVisible(false);
+    setPendingTelemetry(null);
+    setPendingSeverity(null);
+    setCountdown(10);
+  };
+
+  React.useEffect(() => {
+    if (!countdownVisible || !pendingTelemetry) return;
+    const timer = setInterval(() => {
+      setCountdown((prev) => {
+        if (prev <= 1) {
+          clearInterval(timer);
+          setCountdownVisible(false);
+          setSimulating(true);
+          executeImpactCreation(pendingTelemetry)
+            .finally(() => setSimulating(false));
+          setPendingTelemetry(null);
+          setPendingSeverity(null);
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+
+    return () => clearInterval(timer);
+  }, [countdownVisible, pendingTelemetry, executeImpactCreation]);
 
   const formatDate = (iso: string) => {
     const d = new Date(iso);
@@ -113,7 +151,7 @@ export default function ImpactsScreen() {
                 testID={`simulate-${sev}-btn`}
                 style={[styles.simBtn, { borderColor: sevColor(sev) }]}
                 onPress={() => simulateImpact(sev)}
-                disabled={simulating}
+                disabled={simulating || countdownVisible}
                 activeOpacity={0.7}
               >
                 {simulating ? <ActivityIndicator size="small" color={sevColor(sev)} /> : (
@@ -126,6 +164,29 @@ export default function ImpactsScreen() {
           </View>
         </View>
       )}
+
+      <Modal
+        animationType="fade"
+        transparent
+        visible={countdownVisible}
+        onRequestClose={cancelEmergency}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>ALERTA DE IMPACTO</Text>
+            <Text style={styles.modalSubtitle}>
+              Impacto {pendingSeverity ? pendingSeverity.toUpperCase() : ''} detectado con {pendingTelemetry?.g_force?.toFixed(2)}G.
+            </Text>
+            <Text style={styles.modalCountdown}>{countdown}</Text>
+            <Text style={styles.modalHint}>
+              Si no cancelas, se registrará el impacto y se enviará alerta por WhatsApp Business automáticamente.
+            </Text>
+            <TouchableOpacity style={styles.cancelBtn} onPress={cancelEmergency} testID="cancel-emergency-btn">
+              <Text style={styles.cancelBtnText}>CANCELAR ALERTA</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
 
       {loading ? (
         <View style={styles.center}><ActivityIndicator size="large" color={COLORS.primary} /></View>
@@ -177,4 +238,27 @@ const styles = StyleSheet.create({
   emptyIcon: { width: 72, height: 72, borderRadius: 36, backgroundColor: 'rgba(52,211,153,0.1)', alignItems: 'center', justifyContent: 'center', marginBottom: 16 },
   emptyText: { fontSize: 16, color: COLORS.text, fontWeight: '700' },
   emptySubtext: { fontSize: 12, color: COLORS.textSec, marginTop: 6, textAlign: 'center', paddingHorizontal: 40 },
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.75)', alignItems: 'center', justifyContent: 'center', padding: SPACING.md },
+  modalCard: {
+    width: '100%',
+    maxWidth: 420,
+    borderRadius: RADIUS.lg,
+    backgroundColor: COLORS.surface,
+    borderWidth: 1,
+    borderColor: 'rgba(239,68,68,0.35)',
+    padding: SPACING.lg,
+    alignItems: 'center',
+  },
+  modalTitle: { fontSize: 18, fontWeight: '900', color: '#F87171', letterSpacing: 2 },
+  modalSubtitle: { marginTop: 8, fontSize: 13, color: COLORS.text, textAlign: 'center' },
+  modalCountdown: { marginTop: 12, fontSize: 54, fontWeight: '900', color: COLORS.warning, lineHeight: 60 },
+  modalHint: { fontSize: 12, color: COLORS.textSec, textAlign: 'center' },
+  cancelBtn: {
+    marginTop: SPACING.md,
+    backgroundColor: '#EF4444',
+    paddingVertical: 12,
+    paddingHorizontal: 18,
+    borderRadius: RADIUS.md,
+  },
+  cancelBtnText: { color: '#FFF', fontSize: 12, fontWeight: '900', letterSpacing: 1 },
 });

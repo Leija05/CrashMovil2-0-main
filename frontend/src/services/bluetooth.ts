@@ -23,6 +23,8 @@ export interface ScanDevice {
   connected: boolean;
 }
 
+export type ImpactSeverity = 'low' | 'medium' | 'high' | 'critical';
+
 const SERVICE_UUID = '0000ffe0-0000-1000-8000-00805f9b34fb';
 const CHARACTERISTIC_UUID = '0000ffe1-0000-1000-8000-00805f9b34fb';
 
@@ -160,6 +162,29 @@ class BluetoothTelemetryService {
     }, 500);
   }
   stopSimulation() { if (this.simulationTimer) clearInterval(this.simulationTimer); this.connected = false; this.emitStatus('idle'); }
+
+  simulateImpact(severity: ImpactSeverity): TelemetryData {
+    const gRanges: Record<ImpactSeverity, [number, number]> = {
+      low: [2.5, 4.9],
+      medium: [5.0, 9.9],
+      high: [10.0, 14.9],
+      critical: [15.0, 22.0],
+    };
+    const [minG, maxG] = gRanges[severity];
+    const g_force = Number((Math.random() * (maxG - minG) + minG).toFixed(2));
+    const telemetry: TelemetryData = {
+      acceleration_x: Number(((Math.random() * 2 - 1) * g_force).toFixed(2)),
+      acceleration_y: Number(((Math.random() * 2 - 1) * g_force).toFixed(2)),
+      acceleration_z: Number((1 + (Math.random() * 2 - 1) * (g_force * 0.35)).toFixed(2)),
+      gyroscope_x: Number(((Math.random() * 2 - 1) * 380).toFixed(2)),
+      gyroscope_y: Number(((Math.random() * 2 - 1) * 380).toFixed(2)),
+      gyroscope_z: Number(((Math.random() * 2 - 1) * 380).toFixed(2)),
+      g_force,
+      timestamp: Date.now(),
+    };
+    this.emitTelemetry(telemetry);
+    return telemetry;
+  }
 
   async disconnect() {
     if (this.monitorSubscription) this.monitorSubscription.remove();
