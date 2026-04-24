@@ -47,6 +47,8 @@ export interface ScanDevice {
   connected: boolean;
 }
 
+export type ImpactSeverity = 'low' | 'medium' | 'high' | 'critical';
+
 const SERVICE_UUID = '0000ffe0-0000-1000-8000-00805f9b34fb';
 const CHARACTERISTIC_UUID = '0000ffe1-0000-1000-8000-00805f9b34fb';
 
@@ -185,6 +187,33 @@ class BluetoothTelemetryService {
   }
 
   setSimulationMode(e: boolean) { this.simulationEnabled = e; if (!e) this.stopSimulation(); }
+  simulateImpact(severity: ImpactSeverity): TelemetryData {
+    const presets: Record<ImpactSeverity, { gMin: number; gMax: number; gyro: number }> = {
+      low: { gMin: 1.2, gMax: 2.2, gyro: 80 },
+      medium: { gMin: 2.3, gMax: 4.8, gyro: 180 },
+      high: { gMin: 4.9, gMax: 7.5, gyro: 320 },
+      critical: { gMin: 7.6, gMax: 12.0, gyro: 520 },
+    };
+    const preset = presets[severity];
+    const rand = (min: number, max: number) => min + Math.random() * (max - min);
+    const signed = (v: number) => (Math.random() > 0.5 ? v : -v);
+
+    const g_force = rand(preset.gMin, preset.gMax);
+    const acceleration_x = signed(rand(0.2, g_force * 0.6));
+    const acceleration_y = signed(rand(0.2, g_force * 0.7));
+    const acceleration_z = rand(0.8, Math.max(1.0, g_force));
+
+    return {
+      acceleration_x,
+      acceleration_y,
+      acceleration_z,
+      gyroscope_x: signed(rand(0, preset.gyro)),
+      gyroscope_y: signed(rand(0, preset.gyro)),
+      gyroscope_z: signed(rand(0, preset.gyro)),
+      g_force,
+      timestamp: Date.now(),
+    };
+  }
   startSimulation() {
     this.simulationEnabled = true; this.connected = true;
     this.emitStatus('connected', 'Simulador');
