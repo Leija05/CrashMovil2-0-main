@@ -1,6 +1,30 @@
 import { Platform, PermissionsAndroid } from 'react-native';
-import { BleManager, Device, Subscription, State, LogLevel } from 'react-native-ble-plx';
 import { Buffer } from 'buffer';
+
+type Device = any;
+type Subscription = { remove: () => void };
+
+type BlePlxModule = {
+  BleManager: new () => any;
+  State: { PoweredOn: string };
+  LogLevel: { None: number | string };
+};
+
+function loadBlePlx(): BlePlxModule | null {
+  try {
+    const moduleName = 'react-native-ble-plx';
+    // Avoid hard static resolution so the app can still bundle when dependency is unavailable.
+    const dynamicRequire = eval('require');
+    return dynamicRequire(moduleName);
+  } catch {
+    return null;
+  }
+}
+
+const blePlx = loadBlePlx();
+const BleManagerCtor = blePlx?.BleManager ?? null;
+const BleState = blePlx?.State ?? { PoweredOn: 'PoweredOn' };
+const BleLogLevel = blePlx?.LogLevel ?? { None: 0 };
 
 if (!global.Buffer) {
     global.Buffer = Buffer;
@@ -27,7 +51,7 @@ const SERVICE_UUID = '0000ffe0-0000-1000-8000-00805f9b34fb';
 const CHARACTERISTIC_UUID = '0000ffe1-0000-1000-8000-00805f9b34fb';
 
 class BluetoothTelemetryService {
-  private bleManager = new BleManager();
+  private bleManager = BleManagerCtor ? new BleManagerCtor() : null;
   private telemetryListeners = new Set<(data: TelemetryData) => void>();
   private statusListeners = new Set<(status: BluetoothStatus, detail?: string) => void>();
   private deviceListeners = new Set<(device: any | null) => void>();
@@ -40,7 +64,7 @@ class BluetoothTelemetryService {
   private simulationEnabled = false;
 
   constructor() {
-    this.bleManager.setLogLevel(LogLevel.None);
+    this.bleManager?.setLogLevel?.(BleLogLevel.None);
   }
 
   isNativeAvailable() { return Platform.OS !== 'web'; }
@@ -66,8 +90,9 @@ class BluetoothTelemetryService {
   private emitTelemetry(d: TelemetryData) { this.telemetryListeners.forEach(l => l(d)); }
 
   async isBluetoothEnabled() {
+    if (!this.bleManager) return false;
     const state = await this.bleManager.state();
-    return state === State.PoweredOn;
+    return state === BleState.PoweredOn;
   }
 
   async requestPermissions(): Promise<boolean> {
@@ -84,6 +109,10 @@ class BluetoothTelemetryService {
 
   async startDeviceScan(onDeviceFound: (device: Device) => void) {
     if (this.simulationEnabled) return;
+    if (!this.bleManager) {
+      this.emitStatus('error', 'Módulo BLE no disponible en este build');
+      return;
+    }
     const hasPermission = await this.requestPermissions();
     if (!hasPermission) { this.emitStatus('error', 'Permisos denegados'); return; }
 
@@ -100,6 +129,10 @@ class BluetoothTelemetryService {
   }
 
   async connectToDevice(id: string): Promise<boolean> {
+    if (!this.bleManager) {
+      this.emitStatus('error', 'Módulo BLE no disponible en este build');
+      return false;
+    }
     try {
       this.bleManager.stopDeviceScan();
       this.emitStatus('connecting', 'Conectando...');
@@ -121,7 +154,7 @@ class BluetoothTelemetryService {
         }
       );
       return true;
-    } catch (e) {
+    } catch {
       this.emitStatus('error', 'Fallo conexión');
       return false;
     }
