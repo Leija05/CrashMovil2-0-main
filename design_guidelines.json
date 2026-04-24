@@ -1,0 +1,105 @@
+{
+  "theme": "dark",
+  "archetype": "Performance Pro",
+  "emotional_tone": ["tactical", "secure", "high-performance", "urgent"],
+  "colors": {
+    "background": "#0A0A0A",
+    "surface": "#171717",
+    "surface_elevated": "#262626",
+    "primary": "#FF3B30",
+    "primary_hover": "#D63026",
+    "secondary": "#CCFF00",
+    "text_primary": "#FFFFFF",
+    "text_secondary": "#A3A3A3",
+    "border": "rgba(255, 255, 255, 0.1)",
+    "success": "#34C759",
+    "warning": "#FF9500",
+    "critical": "#FF3B30",
+    "info": "#007AFF"
+  },
+  "typography": {
+    "fonts": {
+      "heading": "Barlow Condensed, sans-serif",
+      "body": "Manrope, sans-serif",
+      "mono": "JetBrains Mono, monospace"
+    },
+    "scales": {
+      "h1": "text-5xl tracking-tighter uppercase font-bold",
+      "h2": "text-4xl tracking-tight uppercase font-bold",
+      "h3": "text-2xl tracking-tight uppercase font-semibold",
+      "h4": "text-xl font-semibold",
+      "body": "text-base leading-relaxed text-neutral-300",
+      "small": "text-sm text-neutral-400",
+      "label": "text-xs uppercase tracking-[0.2em] text-neutral-500 font-bold"
+    }
+  },
+  "layout": {
+    "spacing": {
+      "container_padding": "p-6",
+      "gap_standard": "gap-4",
+      "gap_large": "gap-8"
+    },
+    "border_radius": {
+      "card": "rounded-2xl",
+      "button": "rounded-full",
+      "input": "rounded-lg"
+    },
+    "grid_strategy": "MODE B: THE CONTROL ROOM GRID. Use grid-cols-2 on mobile for telemetry data, grid-cols-1 for lists. Dense and compact spacing."
+  },
+  "surfaces": {
+    "cards": "bg-[#171717] border border-white/10 shadow-sm",
+    "glass": "backdrop-blur-xl bg-black/60 border-b border-white/10",
+    "active_telemetry": "bg-[#0A0A0A] border border-[#CCFF00]/50 shadow-[0_0_15px_rgba(204,255,0,0.15)]"
+  },
+  "components": {
+    "buttons": {
+      "primary": "bg-[#FF3B30] text-white hover:bg-[#D63026] rounded-full px-8 py-4 font-bold tracking-wide uppercase shadow-[0_4px_14px_0_rgba(255,59,48,0.39)] transition-all",
+      "secondary": "bg-[#262626] text-white hover:bg-[#333333] border border-white/10 rounded-full px-8 py-4 font-bold transition-all",
+      "outline": "bg-transparent text-[#CCFF00] border-2 border-[#CCFF00] hover:bg-[#CCFF00]/10 rounded-full px-8 py-4 font-bold uppercase transition-all"
+    },
+    "inputs": "bg-[#0A0A0A] border border-white/10 text-white focus:border-[#007AFF] focus:ring-1 focus:ring-[#007AFF] rounded-lg",
+    "data_display": {
+      "metric_card": "flex flex-col items-start p-4 bg-[#171717] border border-white/5 rounded-2xl",
+      "metric_value": "font-heading text-4xl text-white",
+      "metric_label": "font-body text-xs uppercase tracking-[0.2em] text-[#A3A3A3] mb-1"
+    }
+  },
+  "icons": {
+    "library": "lucide-react",
+    "style": "Stroke width 2px, sharp and clinical. Use Phosphor Icons if heavier weights are needed."
+  },
+  "animations": {
+    "hover": "transition-transform duration-200 ease-out hover:-translate-y-1",
+    "active": "active:scale-95",
+    "pulse_critical": "animate-pulse shadow-[0_0_20px_rgba(255,59,48,0.5)]"
+  },
+  "media": {
+    "images": {
+      "login_hero": {
+        "url": "https://images.unsplash.com/photo-1769178017820-4be9b76c737f?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1NzB8MHwxfHNlYXJjaHwxfHxtb3RvcmN5Y2xlJTIwcmlkZXIlMjBuaWdodHxlbnwwfHx8fDE3NzY0MzY4OTZ8MA&ixlib=rb-4.1.0&q=85",
+        "description": "Man in helmet sitting on motorcycle near columns at night. Use as a full-screen background for Login/Register with a heavy bg-black/70 overlay to ensure text contrast."
+      },
+      "helmet_pairing": {
+        "url": "https://images.unsplash.com/photo-1704977733553-e3d7d92c4d66?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1NzV8MHwxfHNlYXJjaHwxfHxtb3RvcmN5Y2xlJTIwaGVsbWV0JTIwZGFya3xlbnwwfHx8fDE3NzY0MzY4OTZ8MA&ixlib=rb-4.1.0&q=85",
+        "description": "A black and white photo of a motorcycle helmet. Use in the 'Bluetooth Device Connection' screen as the visual anchor when scanning for the helmet."
+      },
+      "dashboard_header": {
+        "url": "https://images.unsplash.com/photo-1625638865192-ca6aca85a2d7?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1NzB8MHwxfHNlYXJjaHwyfHxtb3RvcmN5Y2xlJTIwcmlkZXIlMjBuaWdodHxlbnwwfHx8fDE3NzY0MzY4OTZ8MA&ixlib=rb-4.1.0&q=85",
+        "description": "Black and silver motorcycle in the city during night time. Use as a subtle, low-opacity (bg-black/80) header background in the Settings or User Profile screen."
+      }
+    }
+  },
+  "accessibility": {
+    "contrast": "All text must pass WCAG AA. Use text-white on #0A0A0A. Avoid pure black backgrounds for text-heavy areas, use #171717 to reduce OLED smear.",
+    "testing": "All interactive elements MUST have data-testid attributes (e.g., data-testid='connect-helmet-btn')."
+  },
+  "instructions_to_main_agent": [
+    "Strictly adhere to the dark theme colors. Do not use generic Shadcn slate/gray.",
+    "For the real-time telemetry dashboard, use a 2-column bento grid for metrics (Speed, G-Force X, Y, Z).",
+    "Implement the impact classification visually: Low <5G (Green #34C759), Medium 5-10G (Yellow #FF9500), High 10-15G (Orange), Critical >15G (Red #FF3B30 with pulse animation).",
+    "Use 'Barlow Condensed' for all numeric data readouts to give a technical, 'Control Room' gauge feel.",
+    "Ensure all interactive components have proper focus states using focus:ring-1 focus:ring-[#007AFF].",
+    "Use pure HTML+Tailwind for the dashboard layout, heavily customizing Shadcn components to fit the 'Tactical Neumorphism' style.",
+    "Install and use lucide-react for iconography. Keep icons clean and un-filled unless representing an active state."
+  ]
+}
