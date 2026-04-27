@@ -27,7 +27,7 @@ const SERVICE_UUID = '0000ffe0-0000-1000-8000-00805f9b34fb';
 const CHARACTERISTIC_UUID = '0000ffe1-0000-1000-8000-00805f9b34fb';
 
 class BluetoothTelemetryService {
-  private bleManager = new BleManager();
+  private bleManager: BleManager | null = null;
   private telemetryListeners = new Set<(data: TelemetryData) => void>();
   private statusListeners = new Set<(status: BluetoothStatus, detail?: string) => void>();
   private deviceListeners = new Set<(device: any | null) => void>();
@@ -40,10 +40,24 @@ class BluetoothTelemetryService {
   private simulationEnabled = false;
 
   constructor() {
-    this.bleManager.setLogLevel(LogLevel.None);
+    if (Platform.OS !== 'web') {
+      try {
+        this.bleManager = new BleManager();
+        this.bleManager.setLogLevel(LogLevel.None);
+      } catch {
+        this.bleManager = null;
+      }
+    }
   }
 
-  isNativeAvailable() { return Platform.OS !== 'web'; }
+  private getManager(): BleManager {
+    if (!this.bleManager) {
+      throw new Error('Bluetooth BLE no disponible en este entorno');
+    }
+    return this.bleManager;
+  }
+
+  isNativeAvailable() { return Platform.OS !== 'web' && !!this.bleManager; }
   isConnected() { return this.connected; }
   isSimulationMode() { return this.simulationEnabled; }
   getConnectedDevice() { return this.connectedDevice; }
@@ -66,7 +80,8 @@ class BluetoothTelemetryService {
   private emitTelemetry(d: TelemetryData) { this.telemetryListeners.forEach(l => l(d)); }
 
   async isBluetoothEnabled() {
-    const state = await this.bleManager.state();
+    if (!this.isNativeAvailable()) return false;
+    const state = await this.getManager().state();
     return state === State.PoweredOn;
   }
 
@@ -84,26 +99,36 @@ class BluetoothTelemetryService {
 
   async startDeviceScan(onDeviceFound: (device: Device) => void) {
     if (this.simulationEnabled) return;
+    if (!this.isNativeAvailable()) {
+      this.emitStatus('error', 'Bluetooth no disponible');
+      return;
+    }
+    const manager = this.getManager();
     const hasPermission = await this.requestPermissions();
     if (!hasPermission) { this.emitStatus('error', 'Permisos denegados'); return; }
 
     this.emitStatus('scanning', 'Buscando...');
-    this.bleManager.startDeviceScan(null, { allowDuplicates: false }, (error, device) => {
-      if (error) { this.emitStatus('error', 'Error escaneo'); this.bleManager.stopDeviceScan(); return; }
+    manager.startDeviceScan(null, { allowDuplicates: false }, (error, device) => {
+      if (error) { this.emitStatus('error', 'Error escaneo'); manager.stopDeviceScan(); return; }
       if (device && (device.name || device.localName)) onDeviceFound(device);
     });
 
     setTimeout(() => {
-      this.bleManager.stopDeviceScan();
+      manager.stopDeviceScan();
       if (!this.connected) this.emitStatus('idle');
     }, 10000);
   }
 
   async connectToDevice(id: string): Promise<boolean> {
     try {
-      this.bleManager.stopDeviceScan();
+      if (!this.isNativeAvailable()) {
+        this.emitStatus('error', 'Bluetooth no disponible');
+        return false;
+      }
+      const manager = this.getManager();
+      manager.stopDeviceScan();
       this.emitStatus('connecting', 'Conectando...');
-      const device = await this.bleManager.connectToDevice(id);
+      const device = await manager.connectToDevice(id);
       await device.discoverAllServicesAndCharacteristics();
       
       this.connectedDevice = device;
@@ -121,7 +146,7 @@ class BluetoothTelemetryService {
         }
       );
       return true;
-    } catch (e) {
+    } catch {
       this.emitStatus('error', 'Fallo conexión');
       return false;
     }
@@ -160,6 +185,21 @@ class BluetoothTelemetryService {
     }, 500);
   }
   stopSimulation() { if (this.simulationTimer) clearInterval(this.simulationTimer); this.connected = false; this.emitStatus('idle'); }
+
+  simulateImpact(severity: 'low' | 'medium' | 'high' | 'critical'): TelemetryData {
+    const gMap = { low: 4.2, medium: 8.5, high: 13.2, critical: 18.5 };
+    const g = gMap[severity];
+    return {
+      acceleration_x: Number((Math.random() * g * 0.8).toFixed(2)),
+      acceleration_y: Number((Math.random() * g * 0.6).toFixed(2)),
+      acceleration_z: Number((Math.random() * g).toFixed(2)),
+      gyroscope_x: Number((Math.random() * 3).toFixed(2)),
+      gyroscope_y: Number((Math.random() * 3).toFixed(2)),
+      gyroscope_z: Number((Math.random() * 3).toFixed(2)),
+      g_force: g,
+      timestamp: Date.now(),
+    };
+  }
 
   async disconnect() {
     if (this.monitorSubscription) this.monitorSubscription.remove();
