@@ -55,8 +55,6 @@ export const contactsAPI = {
     apiRequest('/contacts', { token }),
   add: (token: string, data: { name: string; phone: string; relationship?: string }) =>
     apiRequest('/contacts', { method: 'POST', body: data, token }),
-  verify: (token: string, contactId: string, verifyToken: string) =>
-    apiRequest(`/contacts/${contactId}/verify`, { method: 'POST', body: { token: verifyToken }, token }),
   delete: (token: string, contactId: string) =>
     apiRequest(`/contacts/${contactId}`, { method: 'DELETE', token }),
 };

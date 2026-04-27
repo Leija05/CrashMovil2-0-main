@@ -217,39 +217,12 @@ class TestContacts:
         data = response.json()
         assert data["name"] == "TEST_Emergency Contact"
         assert data["phone"] == "+525512345678"
-        assert data["verified"] == False
-        assert "verification_token" in data
-        assert len(data["verification_token"]) == 8
-        print(f"✓ POST /contacts working, token: {data['verification_token']}")
-        
+        assert data["verified"] == True
+        assert "verification_token" not in data
+        print("✓ POST /contacts working")
+
         # Store contact_id for later tests
         test_user_data["contact_id"] = data["id"]
-        test_user_data["verification_token"] = data["verification_token"]
-
-    def test_verify_contact(self, api_client, test_user_data):
-        if "contact_id" not in test_user_data:
-            pytest.skip("No contact to verify")
-        
-        response = api_client.post(
-            f"{BASE_URL}/api/contacts/{test_user_data['contact_id']}/verify",
-            json={"token": test_user_data["verification_token"]},
-            headers={"Authorization": f"Bearer {test_user_data['token']}"}
-        )
-        assert response.status_code == 200
-        data = response.json()
-        assert data["verified"] == True
-        print("✓ POST /contacts/{id}/verify working")
-
-        # Verify persistence
-        get_response = api_client.get(
-            f"{BASE_URL}/api/contacts",
-            headers={"Authorization": f"Bearer {test_user_data['token']}"}
-        )
-        contacts = get_response.json()
-        verified_contact = next((c for c in contacts if c["id"] == test_user_data["contact_id"]), None)
-        assert verified_contact is not None
-        assert verified_contact["verified"] == True
-        print("✓ Contact verification persisted")
 
     def test_delete_contact(self, api_client, test_user_data):
         if "contact_id" not in test_user_data:
