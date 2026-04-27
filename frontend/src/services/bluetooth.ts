@@ -112,7 +112,7 @@ class BluetoothTelemetryService {
     this.emitStatus('scanning', 'Buscando...');
     manager.startDeviceScan(null, { allowDuplicates: false }, (error, device) => {
       if (error) { this.emitStatus('error', 'Error escaneo'); manager.stopDeviceScan(); return; }
-      if (device && (device.name || device.localName)) onDeviceFound(device);
+      if (device?.id) onDeviceFound(device);
     });
 
     setTimeout(() => {

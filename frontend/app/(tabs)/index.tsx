@@ -194,7 +194,7 @@ export default function DashboardScreen() {
         {!developerMode && nativeAvailable && !connected && (
           <View style={styles.infoBox}>
             <Ionicons name="radio" size={14} color={COLORS.info} />
-            <Text style={styles.infoText}>Buscando: {pattern} · HM-10 · BT05 · AT-09 · CRASH</Text>
+            <Text style={styles.infoText}>Buscando: {pattern} · HC-05 · HM-10 · BT05 · AT-09 · CRASH</Text>
           </View>
         )}
       </ScrollView>

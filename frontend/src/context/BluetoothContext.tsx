@@ -57,7 +57,7 @@ export function BluetoothProvider({ children }: { children: React.ReactNode }) {
 
   const requestPermissions = useCallback(() => bluetoothService.requestPermissions(), []);
   const startDeviceScan = useCallback(async (onFound: (d: ScanDevice) => void) => {
-    const patterns = [preferredPattern, 'HM-10', 'HMSOFT', 'BT05', 'AT-09', 'CRASH']
+    const patterns = [preferredPattern, 'HM-10', 'HMSOFT', 'BT05', 'AT-09', 'HC-05', 'HC-06', 'HC-08', 'CRASH']
       .filter(Boolean)
       .map(p => p.toUpperCase().trim());
 

@@ -55,7 +55,7 @@ export default function DevicesScreen() {
             <Ionicons name="chevron-forward" size={18} color={COLORS.textDim} />
           </TouchableOpacity>
         )}
-        ListEmptyComponent={<Text style={styles.empty}>No se encontraron dispositivos BLE. Verifica que tu HM-10 esté encendido y en advertising.</Text>}
+        ListEmptyComponent={<Text style={styles.empty}>No se encontraron dispositivos BLE. Verifica que tu HC-05/HM-10 esté encendido y en advertising.</Text>}
       />
       {!nativeAvailable && (
         <Text style={styles.warn}>
@@ -63,7 +63,7 @@ export default function DevicesScreen() {
         </Text>
       )}
       <Text style={styles.note}>
-        Nota: HC-05 clásico no es BLE, por eso no aparece aquí. Usa HM-10/BT05 para telemetría BLE en esta app.
+        Compatible con módulos BLE como HC-05, HM-10, BT05 y AT-09. Si no aparece, reinicia el módulo y vuelve a escanear.
       </Text>
       <Text style={styles.footer}>Estado: {statusDetail || status}</Text>
     </SafeAreaView>
