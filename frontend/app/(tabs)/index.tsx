@@ -15,7 +15,7 @@ export default function DashboardScreen() {
   const router = useRouter();
   const { developerMode, deviceName: pattern } = useAppSettings();
   const {
-    connected, telemetry, status, statusDetail, deviceName,
+    connected, telemetry, statusDetail, deviceName,
     startSimulation, stopSimulation, disconnect, nativeAvailable,
   } = useBluetooth();
 
@@ -194,7 +194,7 @@ export default function DashboardScreen() {
         {!developerMode && nativeAvailable && !connected && (
           <View style={styles.infoBox}>
             <Ionicons name="radio" size={14} color={COLORS.info} />
-            <Text style={styles.infoText}>Buscando: {pattern} · HC-05 · HC-10 · CRASH</Text>
+            <Text style={styles.infoText}>Buscando: {pattern} · HM-10 · BT05 · AT-09 · CRASH</Text>
           </View>
         )}
       </ScrollView>

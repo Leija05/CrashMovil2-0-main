@@ -1,5 +1,5 @@
 import { Platform, PermissionsAndroid } from 'react-native';
-import { BleManager, Device, Subscription, State, LogLevel } from 'react-native-ble-plx';
+import { BleManager, Device, Subscription, State, LogLevel, Characteristic } from 'react-native-ble-plx';
 import { Buffer } from 'buffer';
 
 if (!global.Buffer) {
@@ -23,8 +23,8 @@ export interface ScanDevice {
   connected: boolean;
 }
 
-const SERVICE_UUID = '0000ffe0-0000-1000-8000-00805f9b34fb';
-const CHARACTERISTIC_UUID = '0000ffe1-0000-1000-8000-00805f9b34fb';
+const HM10_SERVICE_UUID = '0000ffe0-0000-1000-8000-00805f9b34fb';
+const HM10_CHARACTERISTIC_UUID = '0000ffe1-0000-1000-8000-00805f9b34fb';
 
 class BluetoothTelemetryService {
   private bleManager: BleManager | null = null;
@@ -38,6 +38,7 @@ class BluetoothTelemetryService {
   private readBuffer = '';
   private connected = false;
   private simulationEnabled = false;
+  private connectedName = '';
 
   constructor() {
     if (Platform.OS !== 'web') {
@@ -59,6 +60,7 @@ class BluetoothTelemetryService {
 
   isNativeAvailable() { return Platform.OS !== 'web' && !!this.bleManager; }
   isConnected() { return this.connected; }
+  getConnectedName() { return this.connectedName; }
   isSimulationMode() { return this.simulationEnabled; }
   getConnectedDevice() { return this.connectedDevice; }
 
@@ -132,13 +134,21 @@ class BluetoothTelemetryService {
       await device.discoverAllServicesAndCharacteristics();
       
       this.connectedDevice = device;
+      this.connectedName = device.name || device.localName || 'Módulo BLE';
       this.connected = true;
       this.emitDevice(device);
-      this.emitStatus('connected', device.name || 'HC-05 BLE');
+      this.emitStatus('connected', this.connectedName);
 
+      const monitorTarget = await this.resolveTelemetryCharacteristic(device);
       this.monitorSubscription = device.monitorCharacteristicForService(
-        SERVICE_UUID, CHARACTERISTIC_UUID, (error, char) => {
-          if (error) { this.disconnect(); return; }
+        monitorTarget.serviceUUID,
+        monitorTarget.uuid,
+        (error, char) => {
+          if (error) {
+            this.emitStatus('error', `Error telemetría: ${error.message || 'monitor caído'}`);
+            this.disconnect();
+            return;
+          }
           if (char?.value) {
             const raw = Buffer.from(char.value, 'base64').toString('utf-8');
             this.processBleData(raw);
@@ -150,6 +160,28 @@ class BluetoothTelemetryService {
       this.emitStatus('error', 'Fallo conexión');
       return false;
     }
+  }
+
+  private async resolveTelemetryCharacteristic(device: Device): Promise<Characteristic> {
+    // 1) Ruta preferida HM-10 / BT05
+    try {
+      const chars = await device.characteristicsForService(HM10_SERVICE_UUID);
+      const hm10Char = chars.find((char) =>
+        char.uuid.toLowerCase() === HM10_CHARACTERISTIC_UUID && (char.isNotifiable || char.isIndicatable || char.isReadable)
+      );
+      if (hm10Char) return hm10Char;
+    } catch {}
+
+    // 2) Fallback: buscar cualquier característica con notify/indicate/read
+    const services = await device.services();
+    for (const service of services) {
+      try {
+        const chars = await service.characteristics();
+        const candidate = chars.find((char) => char.isNotifiable || char.isIndicatable || char.isReadable);
+        if (candidate) return candidate;
+      } catch {}
+    }
+    throw new Error('No se encontró característica de telemetría en el dispositivo BLE');
   }
 
   private processBleData(data: string) {
@@ -179,12 +211,18 @@ class BluetoothTelemetryService {
   setSimulationMode(e: boolean) { this.simulationEnabled = e; if (!e) this.stopSimulation(); }
   startSimulation() {
     this.simulationEnabled = true; this.connected = true;
-    this.emitStatus('connected', 'Simulador');
+    this.connectedName = 'SIMULADOR CRASH';
+    this.emitStatus('connected', this.connectedName);
     this.simulationTimer = setInterval(() => {
       this.emitTelemetry({ acceleration_x: 0, acceleration_y: 0, acceleration_z: 1, gyroscope_x: 0, gyroscope_y: 0, gyroscope_z: 0, g_force: 1, timestamp: Date.now() });
     }, 500);
   }
-  stopSimulation() { if (this.simulationTimer) clearInterval(this.simulationTimer); this.connected = false; this.emitStatus('idle'); }
+  stopSimulation() {
+    if (this.simulationTimer) clearInterval(this.simulationTimer);
+    this.connected = false;
+    this.connectedName = '';
+    this.emitStatus('idle');
+  }
 
   simulateImpact(severity: 'low' | 'medium' | 'high' | 'critical'): TelemetryData {
     const gMap = { low: 4.2, medium: 8.5, high: 13.2, critical: 18.5 };
@@ -205,6 +243,7 @@ class BluetoothTelemetryService {
     if (this.monitorSubscription) this.monitorSubscription.remove();
     if (this.connectedDevice) await this.connectedDevice.cancelConnection();
     this.connected = false;
+    this.connectedName = '';
     this.connectedDevice = null;
     this.emitDevice(null);
     this.emitStatus('idle');

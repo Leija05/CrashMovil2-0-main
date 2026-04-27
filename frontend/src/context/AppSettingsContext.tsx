@@ -12,7 +12,7 @@ type AppSettings = {
 
 const DEFAULTS = {
   developerMode: false,
-  deviceName: 'HC-05',
+  deviceName: 'HM-10',
 };
 
 const AppSettingsContext = createContext<AppSettings>({

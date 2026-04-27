@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useEffect } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, FlatList, ActivityIndicator, RefreshControl } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, FlatList, ActivityIndicator } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
@@ -9,7 +9,7 @@ import type { ScanDevice } from '../src/services/bluetooth';
 
 export default function DevicesScreen() {
   const router = useRouter();
-  const { startDeviceScan, connect, status, statusDetail, disconnect, connected } = useBluetooth();
+  const { startDeviceScan, connect, status, statusDetail, nativeAvailable } = useBluetooth();
   const [devices, setDevices] = useState<ScanDevice[]>([]);
   const [scanning, setScanning] = useState(false);
 
@@ -25,7 +25,7 @@ export default function DevicesScreen() {
     setTimeout(() => setScanning(false), 8000);
   }, [startDeviceScan]);
 
-  useEffect(() => { scan(); }, []);
+  useEffect(() => { scan(); }, [scan]);
 
   const handleConnect = async (id: string) => {
     const ok = await connect(id);
@@ -50,12 +50,21 @@ export default function DevicesScreen() {
             <View style={{flex: 1}}>
               <Text style={styles.deviceName}>{item.name}</Text>
               <Text style={styles.deviceAddr}>{item.id}</Text>
+              <Text style={styles.deviceMeta}>{item.moduleType} · {item.isCompatible ? 'Compatible' : 'No verificado'}</Text>
             </View>
             <Ionicons name="chevron-forward" size={18} color={COLORS.textDim} />
           </TouchableOpacity>
         )}
-        ListEmptyComponent={<Text style={styles.empty}>No se encontraron dispositivos BLE...</Text>}
+        ListEmptyComponent={<Text style={styles.empty}>No se encontraron dispositivos BLE. Verifica que tu HM-10 esté encendido y en advertising.</Text>}
       />
+      {!nativeAvailable && (
+        <Text style={styles.warn}>
+          Esta build no tiene BLE nativo. Para escanear módulos reales usa Android físico con development build.
+        </Text>
+      )}
+      <Text style={styles.note}>
+        Nota: HC-05 clásico no es BLE, por eso no aparece aquí. Usa HM-10/BT05 para telemetría BLE en esta app.
+      </Text>
       <Text style={styles.footer}>Estado: {statusDetail || status}</Text>
     </SafeAreaView>
   );
@@ -68,6 +77,9 @@ const styles = StyleSheet.create({
   card: { flexDirection: 'row', alignItems: 'center', backgroundColor: COLORS.surface, padding: 15, borderRadius: RADIUS.md, marginBottom: 10, gap: 15 },
   deviceName: { color: COLORS.text, fontWeight: '700' },
   deviceAddr: { color: COLORS.textDim, fontSize: 10 },
+  deviceMeta: { color: COLORS.textSec, fontSize: 10, marginTop: 2 },
   empty: { color: COLORS.textDim, textAlign: 'center', marginTop: 50 },
+  warn: { color: COLORS.warning, fontSize: 11, textAlign: 'center', marginTop: 10 },
+  note: { color: COLORS.info, fontSize: 11, textAlign: 'center', marginTop: 10 },
   footer: { color: COLORS.textDim, fontSize: 10, textAlign: 'center', marginTop: 20 }
 });

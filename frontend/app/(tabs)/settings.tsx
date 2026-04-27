@@ -57,7 +57,7 @@ export default function SettingsScreen() {
   };
 
   const saveDeviceName = async () => {
-    await setDeviceName(deviceInput.trim() || 'HC-05');
+    await setDeviceName(deviceInput.trim() || 'HM-10');
     Alert.alert('Guardado', 'Nombre del dispositivo actualizado.');
   };
 
@@ -109,7 +109,7 @@ export default function SettingsScreen() {
             <View style={styles.inputGroup}>
               <Text style={styles.label}>NOMBRE DEL DISPOSITIVO</Text>
               <Text style={styles.helper}>
-                Se usará como patrón de búsqueda para identificar tu módulo. Por defecto se buscan HC-05, HC-10 y CRASH.
+                Se usará como patrón de búsqueda para identificar tu módulo. Por defecto se buscan HM-10, BT05, AT-09 y CRASH.
               </Text>
               <View style={styles.inputRow}>
                 <TextInput
@@ -140,7 +140,7 @@ export default function SettingsScreen() {
                 <Text style={styles.toggleHelper}>
                   {developerMode
                     ? 'Activo: la app simula el giroscópio. Útil para desarrollo y pruebas.'
-                    : 'Inactivo: los datos se leen 100% desde tu módulo Bluetooth HC-05/HC-10.'}
+                    : 'Inactivo: los datos se leen 100% desde tu módulo Bluetooth BLE (HM-10/BT05).'}
                 </Text>
               </View>
               <Switch
