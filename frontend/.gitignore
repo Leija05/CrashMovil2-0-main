@@ -2,7 +2,7 @@
 
 # dependencies
 node_modules/
-
+.metro-cache/
 # Expo
 .expo/
 dist/
