@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react';
 import {
-  View, Text, TouchableOpacity, StyleSheet, ScrollView, RefreshControl, Platform,
+  View, Text, TouchableOpacity, StyleSheet, ScrollView, RefreshControl,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -10,12 +10,15 @@ import { useAuth } from '../../src/context/AuthContext';
 import { useBluetooth } from '../../src/context/BluetoothContext';
 import { useAppSettings } from '../../src/context/AppSettingsContext';
 
+const MAX_G_RING = 12;
+const SEGMENTS = 40;
+
 export default function DashboardScreen() {
   const { user } = useAuth();
   const router = useRouter();
   const { developerMode, deviceName: pattern } = useAppSettings();
   const {
-    connected, telemetry, status, statusDetail, deviceName,
+    connected, telemetry, statusDetail, deviceName,
     startSimulation, stopSimulation, disconnect, nativeAvailable,
   } = useBluetooth();
 
@@ -24,7 +27,6 @@ export default function DashboardScreen() {
   const lastDataRef = useRef<number>(0);
   const [staleData, setStaleData] = useState(false);
 
-  // Track peak G
   useEffect(() => {
     if (telemetry) {
       lastDataRef.current = Date.now();
@@ -48,7 +50,6 @@ export default function DashboardScreen() {
     setTimeout(() => setRefreshing(false), 400);
   }, []);
 
-  // In developer mode, when user taps "Iniciar simulación", we start simulation
   const handleDevStart = () => {
     if (connected) stopSimulation();
     else startSimulation();
@@ -65,9 +66,8 @@ export default function DashboardScreen() {
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={COLORS.accent} />}
         contentContainerStyle={styles.scroll}
       >
-        {/* Header */}
         <View style={styles.header}>
-          <View style={{ flex: 1 }}>
+          <View>
             <Text style={styles.greeting}>Hola, {user?.name?.split(' ')[0] || 'Rider'}</Text>
             <Text style={styles.appName}>C.R.A.S.H.</Text>
           </View>
@@ -83,7 +83,6 @@ export default function DashboardScreen() {
           </View>
         </View>
 
-        {/* Connection status bar */}
         <TouchableOpacity
           style={[styles.statusBar, liveData && styles.statusBarConnected]}
           onPress={() => !developerMode && router.push('/devices')}
@@ -108,27 +107,38 @@ export default function DashboardScreen() {
           )}
         </TouchableOpacity>
 
-        {/* G-Force Main Display */}
-        <View style={[styles.gForceCard, { borderColor: liveData ? `${sevColor}40` : COLORS.border }]}>
-          <Text style={styles.gLabel}>FUERZA G</Text>
-          <View style={styles.gRow}>
-            <Text style={[styles.gValue, { color: liveData ? sevColor : COLORS.textDim }]}>
-              {liveData ? gForce.toFixed(2) : '—.——'}
-            </Text>
-            <Text style={styles.gUnit}>G</Text>
-          </View>
-          <View style={styles.gMeta}>
-            <View style={[styles.sevBadge, { backgroundColor: `${sevColor}20`, opacity: liveData ? 1 : 0.3 }]}>
-              <Text style={[styles.sevText, { color: sevColor }]}>{sevLabel}</Text>
-            </View>
-            <View style={styles.peak}>
-              <Text style={styles.peakLabel}>PICO</Text>
-              <Text style={styles.peakValue}>{peakG.toFixed(2)} G</Text>
-            </View>
+        <View style={styles.ringCard}>
+          <ForceRing gForce={gForce} liveData={liveData} color={sevColor} severity={sevLabel} />
+          <View style={styles.peakRow}>
+            <Text style={styles.peakLabel}>PICO</Text>
+            <Text style={styles.peakValue}>{peakG.toFixed(2)} G</Text>
           </View>
         </View>
 
-        {/* Primary Action */}
+        <View style={styles.coordsCard}>
+          <Text style={styles.coordsTitle}>COORDENADAS / ACELERACIÓN (m/s²)</Text>
+          <View style={styles.coordsGrid}>
+            <CoordItem label="X" value={telemetry?.acceleration_x} live={liveData} />
+            <CoordItem label="Y" value={telemetry?.acceleration_y} live={liveData} />
+            <CoordItem label="Z" value={telemetry?.acceleration_z} live={liveData} />
+          </View>
+        </View>
+
+        <View style={styles.sectionHead}>
+          <Text style={styles.sectionTitle}>TELEMETRÍA DEL CIRCUITO</Text>
+          <View style={[styles.liveBadge, liveData && styles.liveBadgeOn]}>
+            <View style={[styles.liveDot, { backgroundColor: liveData ? COLORS.success : COLORS.textDim }]} />
+            <Text style={[styles.liveText, { color: liveData ? COLORS.success : COLORS.textDim }]}>LIVE</Text>
+          </View>
+        </View>
+
+        <View style={styles.grid}>
+          <MetricCard label="GIRO X" value={telemetry?.gyroscope_x} unit="rad/s" color={COLORS.warning} live={liveData} />
+          <MetricCard label="GIRO Y" value={telemetry?.gyroscope_y} unit="rad/s" color={COLORS.warning} live={liveData} />
+          <MetricCard label="GIRO Z" value={telemetry?.gyroscope_z} unit="rad/s" color="#FB923C" live={liveData} />
+          <MetricCard label="FUERZA G" value={telemetry?.g_force} unit="g" color={COLORS.accent} live={liveData} />
+        </View>
+
         {!developerMode ? (
           connected ? (
             <TouchableOpacity
@@ -148,7 +158,7 @@ export default function DashboardScreen() {
               testID="connect-btn"
             >
               <Ionicons name="bluetooth" size={18} color="#0A0A0A" />
-              <Text style={[styles.primaryBtnText, { color: '#0A0A0A' }]}>CONECTAR CASCO</Text>
+              <Text style={[styles.primaryBtnText, { color: '#0A0A0A' }]}>CONECTAR CASCO BLE</Text>
             </TouchableOpacity>
           )
         ) : (
@@ -165,25 +175,6 @@ export default function DashboardScreen() {
           </TouchableOpacity>
         )}
 
-        {/* Telemetry Grid */}
-        <View style={styles.sectionHead}>
-          <Text style={styles.sectionTitle}>TELEMETRÍA EN TIEMPO REAL</Text>
-          <View style={[styles.liveBadge, liveData && styles.liveBadgeOn]}>
-            <View style={[styles.liveDot, { backgroundColor: liveData ? COLORS.success : COLORS.textDim }]} />
-            <Text style={[styles.liveText, { color: liveData ? COLORS.success : COLORS.textDim }]}>LIVE</Text>
-          </View>
-        </View>
-
-        <View style={styles.grid}>
-          <MetricCard label="ACCEL X" value={telemetry?.acceleration_x} unit="G" color={COLORS.info} live={liveData} />
-          <MetricCard label="ACCEL Y" value={telemetry?.acceleration_y} unit="G" color={COLORS.info} live={liveData} />
-          <MetricCard label="ACCEL Z" value={telemetry?.acceleration_z} unit="G" color={COLORS.accent} live={liveData} />
-          <MetricCard label="GYRO X" value={telemetry?.gyroscope_x} unit="°/s" color={COLORS.warning} live={liveData} />
-          <MetricCard label="GYRO Y" value={telemetry?.gyroscope_y} unit="°/s" color={COLORS.warning} live={liveData} />
-          <MetricCard label="GYRO Z" value={telemetry?.gyroscope_z} unit="°/s" color="#FB923C" live={liveData} />
-        </View>
-
-        {/* Info footer */}
         {!developerMode && !nativeAvailable && (
           <View style={styles.infoBox}>
             <Ionicons name="information-circle" size={14} color={COLORS.info} />
@@ -193,11 +184,59 @@ export default function DashboardScreen() {
         {!developerMode && nativeAvailable && !connected && (
           <View style={styles.infoBox}>
             <Ionicons name="radio" size={14} color={COLORS.info} />
-            <Text style={styles.infoText}>Buscando: {pattern} · HC-05 · HC-10 · CRASH</Text>
+            <Text style={styles.infoText}>Buscando: {pattern} · HC-05 · HC-10 · HM-10 · MLT-BT05 · CRASH</Text>
           </View>
         )}
       </ScrollView>
     </SafeAreaView>
+  );
+}
+
+function ForceRing({ gForce, liveData, color, severity }: { gForce: number; liveData: boolean; color: string; severity: string }) {
+  const progress = Math.max(0, Math.min(gForce / MAX_G_RING, 1));
+  const filled = Math.round(progress * SEGMENTS);
+
+  return (
+    <View style={styles.ringWrap}>
+      <View style={styles.ringTrack}>
+        {Array.from({ length: SEGMENTS }).map((_, i) => {
+          const active = liveData && i < filled;
+          return (
+            <View
+              key={`seg-${i}`}
+              style={[
+                styles.segment,
+                {
+                  transform: [{ rotate: `${(360 / SEGMENTS) * i}deg` }, { translateY: -126 }],
+                  backgroundColor: active ? color : 'rgba(148,163,184,0.14)',
+                  opacity: active ? 1 : 0.65,
+                },
+              ]}
+            />
+          );
+        })}
+
+        <View style={styles.ringInner}>
+          <Text style={[styles.gValue, { color: liveData ? COLORS.text : COLORS.textDim }]}>{liveData ? gForce.toFixed(2) : '0.00'}</Text>
+          <Text style={styles.gTitle}>G - FORCE</Text>
+          <View style={styles.gSubRow}>
+            <View style={[styles.gBullet, { backgroundColor: liveData ? color : COLORS.textDim }]} />
+            <Text style={styles.gSubText}>{liveData ? `${gForce.toFixed(2)}G` : '--'}</Text>
+          </View>
+          <Text style={styles.severityText}>{liveData ? severity : 'SIN DATOS'}</Text>
+        </View>
+      </View>
+      <Text style={styles.ms2}>m / s²</Text>
+    </View>
+  );
+}
+
+function CoordItem({ label, value, live }: { label: string; value?: number; live: boolean }) {
+  return (
+    <View style={styles.coordCell}>
+      <Text style={styles.coordLabel}>{label}</Text>
+      <Text style={styles.coordValue}>{live && value !== undefined ? value.toFixed(2) : '--.--'}</Text>
+    </View>
   );
 }
 
@@ -208,7 +247,7 @@ function MetricCard({ label, value, unit, color, live }: {
     <View style={styles.metric} testID={`metric-${label.toLowerCase().replace(' ', '-')}`}>
       <Text style={styles.metricLabel}>{label}</Text>
       <Text style={[styles.metricValue, { color: live ? color : COLORS.textDim }]}>
-        {live && value !== undefined ? value.toFixed(2) : '—.——'}
+        {live && value !== undefined ? value.toFixed(3) : '—.——'}
       </Text>
       <Text style={styles.metricUnit}>{unit}</Text>
     </View>
@@ -216,9 +255,9 @@ function MetricCard({ label, value, unit, color, live }: {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: COLORS.bg },
+  container: { flex: 1, backgroundColor: '#06080F' },
   scroll: { padding: SPACING.md, paddingBottom: SPACING.xl },
-  header: { flexDirection: 'row', alignItems: 'center', marginBottom: SPACING.md },
+  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: SPACING.md },
   greeting: { fontSize: 13, color: COLORS.textSec },
   appName: { fontSize: 26, fontWeight: '900', color: COLORS.text, letterSpacing: 3, marginTop: 2 },
   modePill: {
@@ -228,29 +267,109 @@ const styles = StyleSheet.create({
   },
   modePillDev: { backgroundColor: 'rgba(251,191,36,0.14)' },
   modeText: { fontSize: 10, fontWeight: '900', letterSpacing: 1 },
+
   statusBar: {
     flexDirection: 'row', alignItems: 'center', gap: 12,
-    backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.border,
+    backgroundColor: '#0B0F1A', borderWidth: 1, borderColor: '#151B2B',
     borderRadius: RADIUS.lg, padding: 14, marginBottom: SPACING.md,
   },
   statusBarConnected: { borderColor: 'rgba(52,211,153,0.3)', backgroundColor: 'rgba(52,211,153,0.05)' },
   statusDot: { width: 10, height: 10, borderRadius: 5 },
   statusLabel: { fontSize: 10, fontWeight: '900', color: COLORS.text, letterSpacing: 1.5 },
   statusDetail: { fontSize: 12, color: COLORS.textSec, marginTop: 2 },
-  gForceCard: {
-    backgroundColor: COLORS.surface, borderRadius: RADIUS.xl, padding: SPACING.xl,
-    alignItems: 'center', borderWidth: 1, borderColor: COLORS.border, marginBottom: SPACING.md,
+
+  ringCard: {
+    borderRadius: RADIUS.xl,
+    borderWidth: 1,
+    borderColor: '#151B2B',
+    backgroundColor: '#070B16',
+    alignItems: 'center',
+    paddingVertical: 20,
+    marginBottom: SPACING.md,
   },
-  gLabel: { fontSize: 10, fontWeight: '800', color: COLORS.textSec, letterSpacing: 3, marginBottom: 8 },
-  gRow: { flexDirection: 'row', alignItems: 'flex-end' },
-  gValue: { fontSize: 78, fontWeight: '900', lineHeight: 80, fontFamily: Platform.select({ ios: 'Menlo', default: 'monospace' }) },
-  gUnit: { fontSize: 20, fontWeight: '700', color: COLORS.textSec, marginBottom: 14, marginLeft: 4 },
-  gMeta: { flexDirection: 'row', alignItems: 'center', gap: 14, marginTop: 14 },
-  sevBadge: { paddingHorizontal: 16, paddingVertical: 5, borderRadius: RADIUS.md },
-  sevText: { fontSize: 11, fontWeight: '900', letterSpacing: 2 },
-  peak: { alignItems: 'center', paddingHorizontal: 14, paddingVertical: 4, borderRadius: RADIUS.md, backgroundColor: COLORS.bg },
-  peakLabel: { fontSize: 8, fontWeight: '800', color: COLORS.textDim, letterSpacing: 1 },
-  peakValue: { fontSize: 12, fontWeight: '900', color: COLORS.text, marginTop: 1 },
+  ringWrap: { alignItems: 'center' },
+  ringTrack: {
+    width: 280,
+    height: 280,
+    borderRadius: 140,
+    alignItems: 'center',
+    justifyContent: 'center',
+    position: 'relative',
+  },
+  segment: {
+    width: 4,
+    height: 18,
+    borderRadius: 999,
+    position: 'absolute',
+  },
+  ringInner: {
+    width: 190,
+    height: 190,
+    borderRadius: 95,
+    borderWidth: 1,
+    borderColor: '#1A2033',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(7,11,22,0.9)',
+  },
+  gValue: { fontSize: 66, fontWeight: '900', color: COLORS.text, lineHeight: 72 },
+  gTitle: { color: '#A9B2C8', letterSpacing: 3, fontSize: 12, fontWeight: '700' },
+  gSubRow: { flexDirection: 'row', alignItems: 'center', gap: 7, marginTop: 6 },
+  gBullet: { width: 8, height: 8, borderRadius: 999 },
+  gSubText: { color: '#D0D6E5', fontWeight: '600' },
+  severityText: { marginTop: 6, fontSize: 10, letterSpacing: 1.5, color: COLORS.textSec, fontWeight: '700' },
+  ms2: { color: '#7F879A', marginTop: 8, fontSize: 13, letterSpacing: 3 },
+  peakRow: {
+    marginTop: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: RADIUS.md,
+    backgroundColor: '#0E1320',
+  },
+  peakLabel: { color: COLORS.textDim, fontSize: 10, fontWeight: '700', letterSpacing: 2 },
+  peakValue: { color: COLORS.text, fontSize: 13, fontWeight: '900' },
+
+  coordsCard: {
+    borderRadius: RADIUS.lg,
+    borderWidth: 1,
+    borderColor: '#151B2B',
+    backgroundColor: '#0B0F1A',
+    padding: 14,
+    marginBottom: SPACING.md,
+  },
+  coordsTitle: { color: COLORS.textSec, fontSize: 10, fontWeight: '900', letterSpacing: 1.8, marginBottom: 10 },
+  coordsGrid: { flexDirection: 'row', gap: 10 },
+  coordCell: {
+    flex: 1,
+    borderRadius: RADIUS.md,
+    backgroundColor: '#060A14',
+    borderWidth: 1,
+    borderColor: '#1A2033',
+    paddingVertical: 12,
+    alignItems: 'center',
+  },
+  coordLabel: { color: COLORS.textDim, fontSize: 11, fontWeight: '900', marginBottom: 4 },
+  coordValue: { color: COLORS.text, fontSize: 18, fontWeight: '800' },
+
+  sectionHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 },
+  sectionTitle: { fontSize: 10, fontWeight: '900', color: COLORS.textSec, letterSpacing: 2 },
+  liveBadge: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 8, paddingVertical: 3, borderRadius: RADIUS.pill, backgroundColor: '#0E1320' },
+  liveBadgeOn: { backgroundColor: 'rgba(52,211,153,0.1)' },
+  liveDot: { width: 6, height: 6, borderRadius: 3 },
+  liveText: { fontSize: 9, fontWeight: '900', letterSpacing: 1 },
+
+  grid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginBottom: SPACING.md },
+  metric: {
+    width: '48%', flexGrow: 1, backgroundColor: '#0B0F1A',
+    borderRadius: RADIUS.md, padding: 14, borderWidth: 1, borderColor: '#151B2B',
+  },
+  metricLabel: { fontSize: 9, fontWeight: '900', color: COLORS.textSec, letterSpacing: 2, marginBottom: 6 },
+  metricValue: { fontSize: 22, fontWeight: '900', color: COLORS.textDim },
+  metricUnit: { fontSize: 10, color: COLORS.textDim, marginTop: 2 },
+
   primaryBtn: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10,
     backgroundColor: COLORS.accent, borderRadius: RADIUS.pill, height: 54,
@@ -259,24 +378,11 @@ const styles = StyleSheet.create({
   primaryBtnDev: { backgroundColor: COLORS.warning },
   primaryBtnDanger: { backgroundColor: COLORS.primary },
   primaryBtnText: { color: '#FFF', fontSize: 14, fontWeight: '900', letterSpacing: 2 },
-  sectionHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 },
-  sectionTitle: { fontSize: 10, fontWeight: '900', color: COLORS.textSec, letterSpacing: 2 },
-  liveBadge: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 8, paddingVertical: 3, borderRadius: RADIUS.pill, backgroundColor: COLORS.surface },
-  liveBadgeOn: { backgroundColor: 'rgba(52,211,153,0.1)' },
-  liveDot: { width: 6, height: 6, borderRadius: 3 },
-  liveText: { fontSize: 9, fontWeight: '900', letterSpacing: 1 },
-  grid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginBottom: SPACING.md },
-  metric: {
-    width: '48%', flexGrow: 1, backgroundColor: COLORS.surface,
-    borderRadius: RADIUS.md, padding: 14, borderWidth: 1, borderColor: COLORS.border,
-  },
-  metricLabel: { fontSize: 9, fontWeight: '900', color: COLORS.textSec, letterSpacing: 2, marginBottom: 6 },
-  metricValue: { fontSize: 22, fontWeight: '900', color: COLORS.textDim, fontFamily: Platform.select({ ios: 'Menlo', default: 'monospace' }) },
-  metricUnit: { fontSize: 10, color: COLORS.textDim, marginTop: 2 },
+
   infoBox: {
     flexDirection: 'row', alignItems: 'center', gap: 8,
-    backgroundColor: COLORS.surface, padding: 12, borderRadius: RADIUS.md,
-    borderWidth: 1, borderColor: COLORS.border, marginTop: 4,
+    backgroundColor: '#0B0F1A', padding: 12, borderRadius: RADIUS.md,
+    borderWidth: 1, borderColor: '#151B2B', marginTop: 4,
   },
   infoText: { fontSize: 11, color: COLORS.textSec, flex: 1 },
 });

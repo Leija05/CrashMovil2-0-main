@@ -31,6 +31,16 @@ export interface ScanDevice {
 // UUIDs estándar para módulos BLE tipo HM-10 / MLT-BT05 / CRASH
 const SERVICE_UUID = '0000ffe0-0000-1000-8000-00805f9b34fb';
 const CHARACTERISTIC_UUID = '0000ffe1-0000-1000-8000-00805f9b34fb';
+const FALLBACK_SERVICE_UUIDS = [
+  SERVICE_UUID,
+  '0000fff0-0000-1000-8000-00805f9b34fb',
+  '0000dfb0-0000-1000-8000-00805f9b34fb',
+];
+const FALLBACK_CHARACTERISTIC_UUIDS = [
+  CHARACTERISTIC_UUID,
+  '0000fff1-0000-1000-8000-00805f9b34fb',
+  '0000ffe2-0000-1000-8000-00805f9b34fb',
+];
 
 class BluetoothTelemetryService {
   private bleManager = new BleManager();
@@ -133,9 +143,47 @@ class BluetoothTelemetryService {
       // Limpiar buffer al conectar para evitar basura previa
       this.readBuffer = '';
 
+      const monitored = await this.setupTelemetryMonitor(device);
+      if (!monitored) {
+        await this.disconnect();
+        this.emitStatus('error', 'No se encontró característica de telemetría');
+        return false;
+      }
+
+      return true;
+    } catch (e) {
+      console.error('Error de conexión:', e);
+      this.emitStatus('error', 'Fallo de conexión');
+      return false;
+    }
+  }
+
+  private normalizeUuid(uuid: string) {
+    return uuid.toLowerCase();
+  }
+
+  private async setupTelemetryMonitor(device: Device): Promise<boolean> {
+    const services = await device.services();
+    const knownService = services.find((service) =>
+      FALLBACK_SERVICE_UUIDS.includes(this.normalizeUuid(service.uuid))
+    );
+
+    const candidateServices = knownService ? [knownService] : services;
+
+    for (const service of candidateServices) {
+      const chars = await service.characteristics();
+      const knownChar = chars.find((char) =>
+        FALLBACK_CHARACTERISTIC_UUIDS.includes(this.normalizeUuid(char.uuid))
+      );
+
+      const telemetryChar = knownChar || chars.find((char) => char.isNotifiable || char.isIndicatable || char.isReadable);
+      if (!telemetryChar) continue;
+
+      this.emitStatus('connected', `Canal BLE: ${service.uuid.slice(4, 8).toUpperCase()}/${telemetryChar.uuid.slice(4, 8).toUpperCase()}`);
+
       this.monitorSubscription = device.monitorCharacteristicForService(
-        SERVICE_UUID,
-        CHARACTERISTIC_UUID,
+        service.uuid,
+        telemetryChar.uuid,
         (error, char) => {
           if (error) {
             console.warn('Error en monitoreo BLE:', error);
@@ -143,18 +191,15 @@ class BluetoothTelemetryService {
             return;
           }
           if (char?.value) {
-            // Decodificación Base64 a string UTF-8
             const raw = Buffer.from(char.value, 'base64').toString('utf-8');
             this.processBleData(raw);
           }
         }
       );
       return true;
-    } catch (e) {
-      console.error('Error de conexión:', e);
-      this.emitStatus('error', 'Fallo de conexión');
-      return false;
     }
+
+    return false;
   }
 
   // --- Procesamiento de Datos (Optimizado para fragmentación) ---
@@ -185,7 +230,7 @@ class BluetoothTelemetryService {
       const dataToParse = parts.length > 1 ? parts[1] : parts[0];
 
       // 2. Limpiar caracteres no numéricos y separar por comas
-      const clean = dataToParse.replace(/[^0-9.,-]/g, '');
+      const clean = dataToParse.replace(/\r/g, '').replace(/[^0-9.,-]/g, '');
       const n = clean.split(',').map(parseFloat);
 
       // 3. Validar que tengamos los 7 campos (ax, ay, az, gx, gy, gz, gForce)
