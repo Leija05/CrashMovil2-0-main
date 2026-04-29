@@ -13,7 +13,6 @@ import bcrypt
 import jwt
 import json
 import uuid
-import secrets
 import httpx
 from datetime import datetime, timezone, timedelta
 from pydantic import BaseModel, Field
@@ -25,7 +24,8 @@ DB_NAME = os.environ["DB_NAME"]
 JWT_SECRET = os.environ["JWT_SECRET"]
 JWT_ALGORITHM = os.environ.get("JWT_ALGORITHM")
 JWT_EXPIRE_MINUTES = int(os.environ.get("JWT_EXPIRE_MINUTES"))
-EMERGENT_LLM_KEY = os.environ.get("EMERGENT_LLM_KEY")
+EMERGENT_LLM_KEY = os.environ.get("EMERGENT_LLM_KEY") or os.environ.get("GOOGLE_API_KEY", "")
+GEMINI_MODEL = os.environ.get("GEMINI_MODEL") or os.environ.get("GEMINI_API_KEY") or "gemini-2.5-flash"
 WHATSAPP_ACCESS_TOKEN = os.environ.get("WHATSAPP_ACCESS_TOKEN", "")
 WHATSAPP_PHONE_NUMBER_ID = os.environ.get("WHATSAPP_PHONE_NUMBER_ID", "")
 WHATSAPP_API_VERSION = os.environ.get("WHATSAPP_API_VERSION", "v20.0")
@@ -69,9 +69,6 @@ class ContactInput(BaseModel):
     name: str
     phone: str
     relationship: Optional[str] = ""
-
-class ContactVerifyInput(BaseModel):
-    token: str
 
 class ImpactInput(BaseModel):
     acceleration_x: float
@@ -271,44 +268,19 @@ async def get_contacts(user: dict = Depends(get_current_user)):
 
 @api_router.post("/contacts")
 async def add_contact(body: ContactInput, user: dict = Depends(get_current_user)):
-    token = secrets.token_hex(4).upper()  # 8-char hex token
     contact_doc = {
         "id": str(uuid.uuid4()),
         "user_id": user["id"],
         "name": body.name.strip(),
         "phone": body.phone.strip(),
         "relationship": body.relationship.strip() if body.relationship else "",
-        "verified": False,
-        "verification_token": token,
+        "verified": True,
+        "verified_at": datetime.now(timezone.utc).isoformat(),
         "created_at": datetime.now(timezone.utc).isoformat()
     }
     await db.emergency_contacts.insert_one(contact_doc)
-    # Try to send WhatsApp verification
-    try:
-        await send_whatsapp_message(
-            body.phone.strip(),
-            f"🏍️ C.R.A.S.H. - Verificación de Contacto de Emergencia\n\n"
-            f"{user.get('name', 'Un usuario')} te ha agregado como contacto de emergencia.\n\n"
-            f"Tu token de verificación es: {token}\n\n"
-            f"Responde 'ACEPTO' para confirmar."
-        )
-    except Exception as e:
-        logger.warning(f"WhatsApp send failed (expected in dev): {e}")
     contact_doc.pop("_id", None)
     return contact_doc
-
-@api_router.post("/contacts/{contact_id}/verify")
-async def verify_contact(contact_id: str, body: ContactVerifyInput, user: dict = Depends(get_current_user)):
-    contact = await db.emergency_contacts.find_one({"id": contact_id, "user_id": user["id"]})
-    if not contact:
-        raise HTTPException(status_code=404, detail="Contacto no encontrado")
-    if contact["verification_token"].upper() != body.token.strip().upper():
-        raise HTTPException(status_code=400, detail="Token inválido")
-    await db.emergency_contacts.update_one(
-        {"id": contact_id},
-        {"$set": {"verified": True, "verified_at": datetime.now(timezone.utc).isoformat()}}
-    )
-    return {"message": "Contacto verificado exitosamente", "verified": True}
 
 @api_router.delete("/contacts/{contact_id}")
 async def delete_contact(contact_id: str, user: dict = Depends(get_current_user)):
@@ -372,9 +344,10 @@ async def create_impact(body: ImpactInput, user: dict = Depends(get_current_user
     # Send alerts if above threshold
     if body.g_force >= threshold:
         try:
-            await send_emergency_alerts(user, impact_doc, profile, diagnosis)
-            await db.impact_events.update_one({"id": impact_id}, {"$set": {"alerts_sent": True}})
+            alerted_contacts = await send_emergency_alerts(user, impact_doc, profile, diagnosis)
+            await db.impact_events.update_one({"id": impact_id}, {"$set": {"alerts_sent": True, "alerted_contacts": alerted_contacts}})
             impact_doc["alerts_sent"] = True
+            impact_doc["alerted_contacts"] = alerted_contacts
         except Exception as e:
             logger.error(f"Alert sending failed: {e}")
 
@@ -457,7 +430,7 @@ async def generate_ai_diagnosis(impact: dict, profile: dict | None) -> dict:
         api_key=EMERGENT_LLM_KEY,
         session_id=f"diagnosis-{impact.get('id', uuid.uuid4())}",
         system_message=system_msg
-    ).with_model("gemini", "gemini-2.5-flash")
+    ).with_model("gemini", GEMINI_MODEL)
 
     response = await chat.send_message(UserMessage(text=prompt))
 
@@ -505,7 +478,7 @@ async def send_emergency_alerts(user: dict, impact: dict, profile: dict | None, 
 
     if not contacts:
         logger.warning("No verified contacts to alert")
-        return
+        return []
 
     location_str = ""
     if impact.get("location") and impact["location"].get("latitude"):
@@ -530,12 +503,15 @@ async def send_emergency_alerts(user: dict, impact: dict, profile: dict | None, 
         f"Por favor, contacte a {user.get('name', 'el usuario')} inmediatamente."
     )
 
+    alerted_contacts = []
     for contact in contacts:
         try:
             await send_whatsapp_message(contact["phone"], message)
             logger.info(f"Alert sent to {contact['name']} ({contact['phone']})")
+            alerted_contacts.append({"id": contact.get("id"), "name": contact.get("name"), "phone": contact.get("phone")})
         except Exception as e:
             logger.error(f"Failed to alert {contact['name']}: {e}")
+    return alerted_contacts
 
 # ─── Health Check ───
 

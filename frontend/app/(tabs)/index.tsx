@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react';
 import {
-  View, Text, TouchableOpacity, StyleSheet, ScrollView, RefreshControl,
+  View, Text, TouchableOpacity, StyleSheet, ScrollView, RefreshControl, Modal, Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -9,12 +9,14 @@ import { COLORS, RADIUS, SPACING, severityColor, severityLabel } from '../../src
 import { useAuth } from '../../src/context/AuthContext';
 import { useBluetooth } from '../../src/context/BluetoothContext';
 import { useAppSettings } from '../../src/context/AppSettingsContext';
+import { impactsAPI } from '../../src/services/api';
 
 const MAX_G_RING = 12;
 const SEGMENTS = 40;
 
 export default function DashboardScreen() {
   const { user } = useAuth();
+  const { token } = useAuth();
   const router = useRouter();
   const { developerMode, deviceName: pattern } = useAppSettings();
   const {
@@ -26,6 +28,9 @@ export default function DashboardScreen() {
   const [peakG, setPeakG] = useState(0);
   const lastDataRef = useRef<number>(0);
   const [staleData, setStaleData] = useState(false);
+  const [countdown, setCountdown] = useState<number | null>(null);
+  const [sending, setSending] = useState(false);
+  const [alertResult, setAlertResult] = useState<any | null>(null);
 
   useEffect(() => {
     if (telemetry) {
@@ -59,6 +64,47 @@ export default function DashboardScreen() {
   const sevColor = severityColor(gForce);
   const sevLabel = severityLabel(gForce);
   const liveData = connected && !staleData && !!telemetry;
+  const highImpact = liveData && gForce >= 10;
+
+  useEffect(() => {
+    if (highImpact && countdown === null && !sending) {
+      setCountdown(8);
+    }
+  }, [highImpact, countdown, sending]);
+
+  useEffect(() => {
+    if (countdown === null) return;
+    if (countdown <= 0) {
+      setCountdown(null);
+      triggerEmergencyFlow();
+      return;
+    }
+    const t = setTimeout(() => setCountdown((v) => (v === null ? null : v - 1)), 1000);
+    return () => clearTimeout(t);
+  }, [countdown]);
+
+  const triggerEmergencyFlow = async () => {
+    if (!token || !telemetry || sending) return;
+    setSending(true);
+    try {
+      const impact = await impactsAPI.create(token, {
+        acceleration_x: telemetry.acceleration_x,
+        acceleration_y: telemetry.acceleration_y,
+        acceleration_z: telemetry.acceleration_z,
+        gyroscope_x: telemetry.gyroscope_x,
+        gyroscope_y: telemetry.gyroscope_y,
+        gyroscope_z: telemetry.gyroscope_z,
+        g_force: telemetry.g_force,
+        latitude: 19.4326,
+        longitude: -99.1332,
+      });
+      setAlertResult(impact);
+    } catch (e: any) {
+      Alert.alert('Error', e.message || 'No se pudo enviar la alerta');
+    } finally {
+      setSending(false);
+    }
+  };
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
@@ -117,12 +163,13 @@ export default function DashboardScreen() {
 
         <View style={styles.coordsCard}>
           <Text style={styles.coordsTitle}>COORDENADAS / ACELERACIÓN (m/s²)</Text>
-          <View style={styles.coordsGrid}>
-            <CoordItem label="X" value={telemetry?.acceleration_x} live={liveData} />
-            <CoordItem label="Y" value={telemetry?.acceleration_y} live={liveData} />
-            <CoordItem label="Z" value={telemetry?.acceleration_z} live={liveData} />
-          </View>
+        <View style={styles.coordsGrid}>
+          <CoordItem label="X" value={telemetry?.acceleration_x} live={liveData} />
+          <CoordItem label="Y" value={telemetry?.acceleration_y} live={liveData} />
+          <CoordItem label="Z" value={telemetry?.acceleration_z} live={liveData} />
         </View>
+        <Text style={styles.coordsGeo}>Lat: 19.4326 · Lon: -99.1332</Text>
+      </View>
 
         <View style={styles.sectionHead}>
           <Text style={styles.sectionTitle}>TELEMETRÍA DEL CIRCUITO</Text>
@@ -188,6 +235,31 @@ export default function DashboardScreen() {
           </View>
         )}
       </ScrollView>
+      <Modal visible={countdown !== null} transparent animationType="fade">
+        <View style={styles.overlay}>
+          <View style={styles.dialog}>
+            <Text style={styles.dialogTitle}>Impacto alto detectado</Text>
+            <Text style={styles.dialogText}>Se enviarán alertas en {countdown}s</Text>
+            <TouchableOpacity style={styles.cancelBtn} onPress={() => setCountdown(null)}>
+              <Text style={styles.cancelText}>Cancelar operación</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+      <Modal visible={!!alertResult} transparent animationType="fade">
+        <View style={styles.overlay}>
+          <View style={styles.dialog}>
+            <Text style={styles.dialogTitle}>Mensajes enviados</Text>
+            <Text style={styles.dialogText}>Se notificó a contactos de emergencia:</Text>
+            {(alertResult?.alerted_contacts || []).map((c: any) => (
+              <Text key={c.id} style={styles.contactSent}>{`• ${c.name} (${c.phone})`}</Text>
+            ))}
+            <TouchableOpacity style={styles.cancelBtn} onPress={() => setAlertResult(null)}>
+              <Text style={styles.cancelText}>Cerrar</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -342,6 +414,7 @@ const styles = StyleSheet.create({
   },
   coordsTitle: { color: COLORS.textSec, fontSize: 10, fontWeight: '900', letterSpacing: 1.8, marginBottom: 10 },
   coordsGrid: { flexDirection: 'row', gap: 10 },
+  coordsGeo: { color: COLORS.textSec, marginTop: 10, fontSize: 12, textAlign: 'center' },
   coordCell: {
     flex: 1,
     borderRadius: RADIUS.md,
@@ -385,4 +458,11 @@ const styles = StyleSheet.create({
     borderWidth: 1, borderColor: '#151B2B', marginTop: 4,
   },
   infoText: { fontSize: 11, color: COLORS.textSec, flex: 1 },
+  overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', alignItems: 'center', justifyContent: 'center', padding: 20 },
+  dialog: { width: '100%', backgroundColor: '#0B0F1A', borderWidth: 1, borderColor: '#1A2033', borderRadius: 16, padding: 18 },
+  dialogTitle: { color: COLORS.text, fontSize: 20, fontWeight: '900', marginBottom: 8 },
+  dialogText: { color: COLORS.textSec, fontSize: 14, marginBottom: 12 },
+  cancelBtn: { backgroundColor: COLORS.primary, borderRadius: 999, paddingVertical: 12, alignItems: 'center', marginTop: 8 },
+  cancelText: { color: '#FFF', fontWeight: '900', letterSpacing: 1 },
+  contactSent: { color: COLORS.text, fontSize: 13, marginBottom: 4 },
 });
