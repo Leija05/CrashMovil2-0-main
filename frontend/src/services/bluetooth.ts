@@ -28,6 +28,8 @@ export interface ScanDevice {
   connected: boolean;
 }
 
+export type ImpactSeverity = 'low' | 'medium' | 'high' | 'critical';
+
 // UUIDs estándar para módulos BLE tipo HM-10 / MLT-BT05 / CRASH
 const SERVICE_UUID = '0000ffe0-0000-1000-8000-00805f9b34fb';
 const CHARACTERISTIC_UUID = '0000ffe1-0000-1000-8000-00805f9b34fb';
@@ -281,6 +283,33 @@ class BluetoothTelemetryService {
     if (this.simulationTimer) clearInterval(this.simulationTimer);
     this.connected = false;
     this.emitStatus('idle');
+  }
+
+  simulateImpact(severity: ImpactSeverity): TelemetryData {
+    const severityRanges: Record<ImpactSeverity, [number, number]> = {
+      low: [3.5, 4.9],
+      medium: [5.0, 9.9],
+      high: [10.0, 14.9],
+      critical: [15.0, 20.0],
+    };
+
+    const [minG, maxG] = severityRanges[severity];
+    const gForce = Number((minG + Math.random() * (maxG - minG)).toFixed(2));
+    const impactScale = gForce / 10;
+
+    const sample: TelemetryData = {
+      acceleration_x: Number((Math.random() * 2 * impactScale).toFixed(2)),
+      acceleration_y: Number((Math.random() * 2 * impactScale).toFixed(2)),
+      acceleration_z: Number((0.8 + Math.random() * 1.5 * impactScale).toFixed(2)),
+      gyroscope_x: Number((Math.random() * 80 * impactScale).toFixed(2)),
+      gyroscope_y: Number((Math.random() * 80 * impactScale).toFixed(2)),
+      gyroscope_z: Number((Math.random() * 80 * impactScale).toFixed(2)),
+      g_force: gForce,
+      timestamp: Date.now(),
+    };
+
+    this.emitTelemetry(sample);
+    return sample;
   }
 
   // --- Desconexión ---
