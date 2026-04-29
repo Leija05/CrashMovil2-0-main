@@ -15,6 +15,7 @@ import json
 import uuid
 import secrets
 import httpx
+import asyncio
 from datetime import datetime, timezone, timedelta
 from pydantic import BaseModel, Field
 from typing import List, Optional
@@ -26,6 +27,9 @@ JWT_SECRET = os.environ["JWT_SECRET"]
 JWT_ALGORITHM = os.environ.get("JWT_ALGORITHM")
 JWT_EXPIRE_MINUTES = int(os.environ.get("JWT_EXPIRE_MINUTES"))
 EMERGENT_LLM_KEY = os.environ.get("EMERGENT_LLM_KEY")
+GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY")
+GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.0-flash-lite")
+ALERT_COUNTDOWN_SECONDS = int(os.environ.get("ALERT_COUNTDOWN_SECONDS", "10"))
 WHATSAPP_ACCESS_TOKEN = os.environ.get("WHATSAPP_ACCESS_TOKEN", "")
 WHATSAPP_PHONE_NUMBER_ID = os.environ.get("WHATSAPP_PHONE_NUMBER_ID", "")
 WHATSAPP_API_VERSION = os.environ.get("WHATSAPP_API_VERSION", "v20.0")
@@ -375,6 +379,9 @@ async def create_impact(body: ImpactInput, user: dict = Depends(get_current_user
     # Send alerts if above threshold
     if body.g_force >= threshold:
         try:
+            if ALERT_COUNTDOWN_SECONDS > 0:
+                logger.info(f"Starting emergency countdown ({ALERT_COUNTDOWN_SECONDS}s) for impact {impact_id}")
+                await asyncio.sleep(ALERT_COUNTDOWN_SECONDS)
             await send_emergency_alerts(user, impact_doc, profile, diagnosis)
             await db.impact_events.update_one({"id": impact_id}, {"$set": {"alerts_sent": True}})
             impact_doc["alerts_sent"] = True
@@ -456,11 +463,15 @@ async def generate_ai_diagnosis(impact: dict, profile: dict | None) -> dict:
         f"Genera el diagnóstico de emergencia en JSON."
     )
 
+    llm_api_key = EMERGENT_LLM_KEY or GOOGLE_API_KEY
+    if not llm_api_key:
+        raise ValueError("No hay clave LLM configurada (EMERGENT_LLM_KEY/GOOGLE_API_KEY)")
+
     chat = LlmChat(
-        api_key=EMERGENT_LLM_KEY,
+        api_key=llm_api_key,
         session_id=f"diagnosis-{impact.get('id', uuid.uuid4())}",
         system_message=system_msg
-    ).with_model("gemini", "gemini-2.5-flash")
+    ).with_model("gemini", GEMINI_MODEL)
 
     response = await chat.send_message(UserMessage(text=prompt))
 
