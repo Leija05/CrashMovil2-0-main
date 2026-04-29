@@ -33,9 +33,10 @@ export default function DashboardScreen() {
     }
   }, [telemetry, peakG]);
 
+  // Stale data watchdog (no updates for 2s => not truly live)
   useEffect(() => {
     const t = setInterval(() => {
-      if (connected && Date.now() - lastDataRef.current > 6000) {
+      if (connected && Date.now() - lastDataRef.current > 2000) {
         setStaleData(true);
       }
     }, 1000);
