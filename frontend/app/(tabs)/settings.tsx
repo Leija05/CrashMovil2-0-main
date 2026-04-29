@@ -15,17 +15,19 @@ import { settingsAPI } from '../../src/services/api';
 export default function SettingsScreen() {
   const router = useRouter();
   const { token, logout } = useAuth();
-  const { developerMode, setDeveloperMode, deviceName, setDeviceName } = useAppSettings();
+  const { developerMode, setDeveloperMode, deviceName, setDeviceName, alertCountdownSeconds, setAlertCountdownSeconds } = useAppSettings();
   const { connected, deviceName: liveDevice, disconnect, nativeAvailable } = useBluetooth();
 
   const [threshold, setThreshold] = useState('5');
   const [autoCall, setAutoCall] = useState(true);
   const [autoWhatsapp, setAutoWhatsapp] = useState(true);
+  const [countdownSeconds, setCountdownSeconds] = useState(String(alertCountdownSeconds));
   const [deviceInput, setDeviceInput] = useState(deviceName);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => { setDeviceInput(deviceName); }, [deviceName]);
+  useEffect(() => { setCountdownSeconds(String(alertCountdownSeconds)); }, [alertCountdownSeconds]);
 
   const fetchData = useCallback(async () => {
     if (!token) return;
@@ -43,12 +45,18 @@ export default function SettingsScreen() {
   const saveServer = async () => {
     if (!token) return;
     const t = parseFloat(threshold);
+    const c = parseInt(countdownSeconds, 10);
     if (isNaN(t) || t <= 0) {
       Alert.alert('Error', 'El umbral debe ser un número positivo');
       return;
     }
+    if (isNaN(c) || c < 0 || c > 60) {
+      Alert.alert('Error', 'La cuenta regresiva debe estar entre 0 y 60 segundos');
+      return;
+    }
     setSaving(true);
     try {
+      await setAlertCountdownSeconds(c);
       await settingsAPI.update(token, { alert_threshold: t, auto_call: autoCall, auto_whatsapp: autoWhatsapp });
       Alert.alert('Guardado', 'Configuración de alertas actualizada');
     } catch (e: any) {
@@ -150,6 +158,21 @@ export default function SettingsScreen() {
                 trackColor={{ false: '#2A2A34', true: 'rgba(251,191,36,0.5)' }}
                 thumbColor={developerMode ? COLORS.warning : '#9A9AA8'}
               />
+            </View>
+
+            <View style={styles.inputGroup}>
+              <Text style={styles.label}>CUENTA REGRESIVA ANTES DE ALERTA</Text>
+              <Text style={styles.helper}>Tiempo para cancelar manualmente antes de enviar WhatsApp automático (0-60 segundos).</Text>
+              <View style={styles.thresholdRow}>
+                <TextInput
+                  testID="countdown-input"
+                  style={[styles.input, { width: 100, textAlign: 'center', fontSize: 18, fontWeight: '800' }]}
+                  value={countdownSeconds}
+                  onChangeText={setCountdownSeconds}
+                  keyboardType="numeric"
+                />
+                <Text style={styles.gSymbol}>s</Text>
+              </View>
             </View>
             {!nativeAvailable && !developerMode && (
               <View style={styles.warnBox}>

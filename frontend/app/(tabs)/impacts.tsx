@@ -1,6 +1,6 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useRef } from 'react';
 import {
-  View, Text, TouchableOpacity, StyleSheet, FlatList, RefreshControl, ActivityIndicator,
+  View, Text, TouchableOpacity, StyleSheet, FlatList, RefreshControl, ActivityIndicator, Modal,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -21,11 +21,15 @@ function sevColor(s: string) {
 export default function ImpactsScreen() {
   const { token } = useAuth();
   const router = useRouter();
-  const { developerMode } = useAppSettings();
+  const { developerMode, alertCountdownSeconds } = useAppSettings();
   const [impacts, setImpacts] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [simulating, setSimulating] = useState(false);
+  const [countdownVisible, setCountdownVisible] = useState(false);
+  const [countdown, setCountdown] = useState(alertCountdownSeconds);
+  const [cancelRequested, setCancelRequested] = useState(false);
+  const cancelRef = useRef(false);
 
   const fetchImpacts = useCallback(async () => {
     if (!token) return;
@@ -41,8 +45,25 @@ export default function ImpactsScreen() {
   const simulateImpact = async (severity: 'low' | 'medium' | 'high' | 'critical') => {
     if (!token) return;
     setSimulating(true);
+    setCancelRequested(false);
+    cancelRef.current = false;
     try {
       const data = bluetoothService.simulateImpact(severity);
+      const seconds = Math.max(0, alertCountdownSeconds);
+      if (seconds > 0) {
+        setCountdown(seconds);
+        setCountdownVisible(true);
+        for (let left = seconds; left > 0; left -= 1) {
+          setCountdown(left);
+          await new Promise((resolve) => setTimeout(resolve, 1000));
+          if (cancelRef.current) {
+            setCountdownVisible(false);
+            setSimulating(false);
+            return;
+          }
+        }
+        setCountdownVisible(false);
+      }
       const newImpact = await impactsAPI.create(token, {
         acceleration_x: data.acceleration_x,
         acceleration_y: data.acceleration_y,
@@ -92,6 +113,23 @@ export default function ImpactsScreen() {
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
+      <Modal transparent visible={countdownVisible} animationType="fade">
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>ALERTA AUTOMÁTICA</Text>
+            <Text style={styles.modalBody}>Enviando alerta de emergencia en</Text>
+            <Text style={styles.modalCountdown}>{countdown}s</Text>
+            <TouchableOpacity
+              testID="cancel-alert-btn"
+              style={styles.cancelBtn}
+              onPress={() => { setCancelRequested(true); cancelRef.current = true; setCountdownVisible(false); }}
+            >
+              <Text style={styles.cancelBtnText}>CANCELAR ALERTA</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
       <View style={styles.headerSection}>
         <View>
           <Text style={styles.title}>IMPACTOS</Text>
@@ -177,4 +215,11 @@ const styles = StyleSheet.create({
   emptyIcon: { width: 72, height: 72, borderRadius: 36, backgroundColor: 'rgba(52,211,153,0.1)', alignItems: 'center', justifyContent: 'center', marginBottom: 16 },
   emptyText: { fontSize: 16, color: COLORS.text, fontWeight: '700' },
   emptySubtext: { fontSize: 12, color: COLORS.textSec, marginTop: 6, textAlign: 'center', paddingHorizontal: 40 },
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.65)', alignItems: 'center', justifyContent: 'center', padding: 24 },
+  modalCard: { width: '100%', backgroundColor: COLORS.surface, borderRadius: RADIUS.lg, borderWidth: 1, borderColor: COLORS.border, padding: 20, alignItems: 'center' },
+  modalTitle: { fontSize: 14, fontWeight: '900', color: COLORS.warning, letterSpacing: 2 },
+  modalBody: { fontSize: 13, color: COLORS.textSec, marginTop: 10 },
+  modalCountdown: { fontSize: 48, fontWeight: '900', color: COLORS.primary, marginVertical: 8 },
+  cancelBtn: { marginTop: 8, backgroundColor: 'rgba(255,59,48,0.15)', borderColor: 'rgba(255,59,48,0.4)', borderWidth: 1, borderRadius: RADIUS.md, paddingHorizontal: 16, paddingVertical: 10 },
+  cancelBtnText: { color: COLORS.primary, fontSize: 12, fontWeight: '900', letterSpacing: 1 },
 });

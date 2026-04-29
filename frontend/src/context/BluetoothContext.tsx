@@ -6,6 +6,7 @@ type BluetoothCtx = {
   status: BluetoothStatus;
   statusDetail?: string;
   connected: boolean;
+  deviceName: string;
   device: ScanDevice | null;
   telemetry: TelemetryData | null;
   nativeAvailable: boolean;
@@ -60,7 +61,14 @@ export function BluetoothProvider({ children }: { children: React.ReactNode }) {
 
   return (
     <BluetoothContext.Provider value={{
-      status, statusDetail, connected, device, telemetry, nativeAvailable, bluetoothEnabled,
+      status,
+      statusDetail,
+      connected,
+      deviceName: device?.name || (connected ? 'SIMULADOR CRASH' : ''),
+      device,
+      telemetry,
+      nativeAvailable,
+      bluetoothEnabled,
       requestPermissions, startDeviceScan, connect, disconnect,
       startSimulation: () => bluetoothService.startSimulation(),
       stopSimulation: () => bluetoothService.stopSimulation(),
