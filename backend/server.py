@@ -29,6 +29,9 @@ EMERGENT_LLM_KEY = os.environ.get("EMERGENT_LLM_KEY")
 WHATSAPP_ACCESS_TOKEN = os.environ.get("WHATSAPP_ACCESS_TOKEN", "")
 WHATSAPP_PHONE_NUMBER_ID = os.environ.get("WHATSAPP_PHONE_NUMBER_ID", "")
 WHATSAPP_API_VERSION = os.environ.get("WHATSAPP_API_VERSION", "v20.0")
+WHATSAPP_COLLISION_TEMPLATE_NAME = os.environ.get("WHATSAPP_COLLISION_TEMPLATE_NAME", "")
+WHATSAPP_TEMPLATE_LANGUAGE = os.environ.get("WHATSAPP_TEMPLATE_LANGUAGE", "es_MX")
+WHATSAPP_TEMPLATE_FALLBACK_ON_24H = os.environ.get("WHATSAPP_TEMPLATE_FALLBACK_ON_24H", "true").lower() == "true"
 
 client = AsyncIOMotorClient(MONGO_URL)
 db = client[DB_NAME]
@@ -498,6 +501,39 @@ async def send_whatsapp_message(phone: str, message: str):
         logger.info(f"WhatsApp response: {resp.status_code} - {resp.text}")
         return resp.json()
 
+async def send_whatsapp_template_message(phone: str, variables: List[str]):
+    if not WHATSAPP_COLLISION_TEMPLATE_NAME:
+        raise ValueError("WHATSAPP_COLLISION_TEMPLATE_NAME no está configurado")
+
+    url = f"https://graph.facebook.com/{WHATSAPP_API_VERSION}/{WHATSAPP_PHONE_NUMBER_ID}/messages"
+    headers = {
+        "Authorization": f"Bearer {WHATSAPP_ACCESS_TOKEN}",
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "messaging_product": "whatsapp",
+        "to": phone,
+        "type": "template",
+        "template": {
+            "name": WHATSAPP_COLLISION_TEMPLATE_NAME,
+            "language": {
+                "code": WHATSAPP_TEMPLATE_LANGUAGE
+            },
+            "components": [
+                {
+                    "type": "body",
+                    "parameters": [{"type": "text", "text": value} for value in variables]
+                }
+            ]
+        }
+    }
+    async with httpx.AsyncClient() as http_client:
+        resp = await http_client.post(url, json=payload, headers=headers)
+        logger.info(f"WhatsApp template response: {resp.status_code} - {resp.text}")
+        if resp.status_code >= 400:
+            raise HTTPException(status_code=resp.status_code, detail=f"Error enviando plantilla WhatsApp: {resp.text}")
+        return resp.json()
+
 async def send_emergency_alerts(user: dict, impact: dict, profile: dict | None, diagnosis: dict | None):
     contacts = await db.emergency_contacts.find(
         {"user_id": user["id"], "verified": True}
@@ -513,26 +549,47 @@ async def send_emergency_alerts(user: dict, impact: dict, profile: dict | None, 
         lon = impact["location"]["longitude"]
         location_str = f"📍 Ubicación: https://maps.google.com/?q={lat},{lon}\n"
 
-    diagnosis_str = ""
+    diagnosis_summary = "Sin diagnóstico IA disponible"
+    recommendation_summary = "Comunícate de inmediato con el usuario y servicios de emergencia."
     if diagnosis:
-        diagnosis_str = (
-            f"🏥 Diagnóstico IA:\n"
-            f"Severidad: {diagnosis.get('severity_assessment', 'N/A')}\n"
-            f"Prioridad: {diagnosis.get('priority_level', 'N/A')}\n"
-        )
+        diagnosis_summary = diagnosis.get("severity_assessment") or diagnosis_summary
+        recs = diagnosis.get("emergency_recommendations") or []
+        if isinstance(recs, list) and recs:
+            recommendation_summary = recs[0]
+
+    location_url = "Ubicación no disponible"
+    if impact.get("location") and impact["location"].get("latitude"):
+        lat = impact["location"]["latitude"]
+        lon = impact["location"]["longitude"]
+        location_url = f"https://maps.google.com/?q={lat},{lon}"
 
     message = (
         f"🚨 ALERTA DE EMERGENCIA C.R.A.S.H. 🚨\n\n"
         f"Se ha detectado un impacto de {impact['g_force']:.1f}G ({impact['severity_label']})\n"
         f"Fecha: {impact['created_at']}\n\n"
         f"{location_str}"
-        f"{diagnosis_str}\n"
+        f"🏥 Diagnóstico IA:\n"
+        f"Severidad: {diagnosis_summary}\n"
+        f"Recomendación: {recommendation_summary}\n\n"
         f"Por favor, contacte a {user.get('name', 'el usuario')} inmediatamente."
     )
 
     for contact in contacts:
         try:
-            await send_whatsapp_message(contact["phone"], message)
+            template_vars = [
+                impact.get("severity_label", "N/A"),
+                diagnosis_summary,
+                recommendation_summary,
+                location_url
+            ]
+            try:
+                await send_whatsapp_template_message(contact["phone"], template_vars)
+            except Exception as template_error:
+                logger.warning(f"Template send failed for {contact['phone']}: {template_error}")
+                if WHATSAPP_TEMPLATE_FALLBACK_ON_24H:
+                    await send_whatsapp_message(contact["phone"], message)
+                else:
+                    raise template_error
             logger.info(f"Alert sent to {contact['name']} ({contact['phone']})")
         except Exception as e:
             logger.error(f"Failed to alert {contact['name']}: {e}")
