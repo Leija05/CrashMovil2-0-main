@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react';
 import {
-  View, Text, TouchableOpacity, StyleSheet, ScrollView, RefreshControl, Modal,
+  View, Text, TouchableOpacity, StyleSheet, ScrollView, RefreshControl, Modal, Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -50,7 +50,7 @@ export default function DashboardScreen() {
       (async () => {
         if (!token || !telemetry) return;
         try {
-          await impactsAPI.create(token, {
+          const impact = await impactsAPI.create(token, {
             acceleration_x: telemetry.acceleration_x,
             acceleration_y: telemetry.acceleration_y,
             acceleration_z: telemetry.acceleration_z,
@@ -61,6 +61,15 @@ export default function DashboardScreen() {
             latitude: 19.4326,
             longitude: -99.1332,
           });
+          const sent = impact?.alert_result?.sent_contacts || [];
+          const failed = impact?.alert_result?.failed_contacts || [];
+          if (sent.length > 0) {
+            Alert.alert('Alerta enviada', `Mensaje enviado con éxito a: ${sent.join(', ')}`);
+          } else if (failed.length > 0) {
+            Alert.alert('No se pudo enviar', `Falló el envío a: ${failed.join(', ')}`);
+          } else {
+            Alert.alert('Sin contactos verificados', 'No hay contactos verificados para enviar alertas.');
+          }
         } catch (e) {
           console.error(e);
         } finally {

@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useRef } from 'react';
 import {
-  View, Text, TouchableOpacity, StyleSheet, FlatList, RefreshControl, ActivityIndicator, Modal,
+  View, Text, TouchableOpacity, StyleSheet, FlatList, RefreshControl, ActivityIndicator, Modal, Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -76,6 +76,15 @@ export default function ImpactsScreen() {
         longitude: -99.1332,
       });
       setImpacts((prev) => [newImpact, ...prev]);
+      const sent = newImpact?.alert_result?.sent_contacts || [];
+      const failed = newImpact?.alert_result?.failed_contacts || [];
+      if (sent.length > 0) {
+        Alert.alert('Alerta enviada', `Mensaje enviado con éxito a: ${sent.join(', ')}`);
+      } else if (failed.length > 0) {
+        Alert.alert('No se pudo enviar', `Falló el envío a: ${failed.join(', ')}`);
+      } else {
+        Alert.alert('Sin contactos verificados', 'No hay contactos verificados para enviar alertas.');
+      }
     } catch (e: any) {
       console.error(e);
     } finally { setSimulating(false); }

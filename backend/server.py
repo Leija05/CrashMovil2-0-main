@@ -386,9 +386,10 @@ async def create_impact(body: ImpactInput, user: dict = Depends(get_current_user
             if ALERT_COUNTDOWN_SECONDS > 0:
                 logger.info(f"Starting emergency countdown ({ALERT_COUNTDOWN_SECONDS}s) for impact {impact_id}")
                 await asyncio.sleep(ALERT_COUNTDOWN_SECONDS)
-            await send_emergency_alerts(user, impact_doc, profile, diagnosis)
+            alert_result = await send_emergency_alerts(user, impact_doc, profile, diagnosis)
             await db.impact_events.update_one({"id": impact_id}, {"$set": {"alerts_sent": True}})
             impact_doc["alerts_sent"] = True
+            impact_doc["alert_result"] = alert_result
         except Exception as e:
             logger.error(f"Alert sending failed: {e}")
 
@@ -590,7 +591,7 @@ async def send_emergency_alerts(user: dict, impact: dict, profile: dict | None, 
 
     if not contacts:
         logger.warning("No verified contacts to alert")
-        return
+        return {"sent_contacts": [], "failed_contacts": []}
 
     location_str = ""
     if impact.get("location") and impact["location"].get("latitude"):
@@ -640,8 +641,11 @@ async def send_emergency_alerts(user: dict, impact: dict, profile: dict | None, 
                 else:
                     raise template_error
             logger.info(f"Alert sent to {contact['name']} ({contact['phone']})")
+            sent_contacts.append(contact["name"])
         except Exception as e:
             logger.error(f"Failed to alert {contact['name']}: {e}")
+            failed_contacts.append(contact["name"])
+    return {"sent_contacts": sent_contacts, "failed_contacts": failed_contacts}
 
 # ─── Health Check ───
 
@@ -694,3 +698,5 @@ app.add_middleware(
 @app.on_event("shutdown")
 async def shutdown_db_client():
     client.close()
+    sent_contacts: List[str] = []
+    failed_contacts: List[str] = []
