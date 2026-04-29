@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react';
 import {
-  View, Text, TouchableOpacity, StyleSheet, ScrollView, RefreshControl,
+  View, Text, TouchableOpacity, StyleSheet, ScrollView, RefreshControl, Modal,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -9,12 +9,13 @@ import { COLORS, RADIUS, SPACING, severityColor, severityLabel } from '../../src
 import { useAuth } from '../../src/context/AuthContext';
 import { useBluetooth } from '../../src/context/BluetoothContext';
 import { useAppSettings } from '../../src/context/AppSettingsContext';
+import { impactsAPI } from '../../src/services/api';
 
 const MAX_G_RING = 12;
 const SEGMENTS = 40;
 
 export default function DashboardScreen() {
-  const { user } = useAuth();
+  const { user, token } = useAuth();
   const router = useRouter();
   const { developerMode, deviceName: pattern } = useAppSettings();
   const {
@@ -26,14 +27,52 @@ export default function DashboardScreen() {
   const [peakG, setPeakG] = useState(0);
   const lastDataRef = useRef<number>(0);
   const [staleData, setStaleData] = useState(false);
+  const [alertVisible, setAlertVisible] = useState(false);
+  const [alertCountdown, setAlertCountdown] = useState(15);
+  const alertActiveRef = useRef(false);
 
   useEffect(() => {
     if (telemetry) {
       lastDataRef.current = Date.now();
       setStaleData(false);
       if (telemetry.g_force > peakG) setPeakG(telemetry.g_force);
+      if (telemetry.g_force > 5 && !alertActiveRef.current) {
+        alertActiveRef.current = true;
+        setAlertCountdown(15);
+        setAlertVisible(true);
+      }
     }
   }, [telemetry, peakG]);
+
+  useEffect(() => {
+    if (!alertVisible) return;
+    if (alertCountdown <= 0) {
+      (async () => {
+        if (!token || !telemetry) return;
+        try {
+          await impactsAPI.create(token, {
+            acceleration_x: telemetry.acceleration_x,
+            acceleration_y: telemetry.acceleration_y,
+            acceleration_z: telemetry.acceleration_z,
+            gyroscope_x: telemetry.gyroscope_x,
+            gyroscope_y: telemetry.gyroscope_y,
+            gyroscope_z: telemetry.gyroscope_z,
+            g_force: telemetry.g_force,
+            latitude: 19.4326,
+            longitude: -99.1332,
+          });
+        } catch (e) {
+          console.error(e);
+        } finally {
+          setAlertVisible(false);
+          alertActiveRef.current = false;
+        }
+      })();
+      return;
+    }
+    const timer = setTimeout(() => setAlertCountdown((s) => s - 1), 1000);
+    return () => clearTimeout(timer);
+  }, [alertVisible, alertCountdown, token, telemetry]);
 
   useEffect(() => {
     const t = setInterval(() => {
@@ -62,6 +101,18 @@ export default function DashboardScreen() {
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
+      <Modal visible={alertVisible} transparent animationType="fade">
+        <View style={styles.alertOverlay}>
+          <View style={styles.alertCard}>
+            <Text style={styles.alertTitle}>ALERTA DETECTADA</Text>
+            <Text style={styles.alertSubtitle}>Se enviará mensaje de emergencia en:</Text>
+            <Text style={styles.alertTimer}>{alertCountdown}s</Text>
+            <TouchableOpacity style={styles.alertCancelBtn} onPress={() => { setAlertVisible(false); alertActiveRef.current = false; }}>
+              <Text style={styles.alertCancelText}>CANCELAR</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
       <ScrollView
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={COLORS.accent} />}
         contentContainerStyle={styles.scroll}
@@ -385,4 +436,11 @@ const styles = StyleSheet.create({
     borderWidth: 1, borderColor: '#151B2B', marginTop: 4,
   },
   infoText: { fontSize: 11, color: COLORS.textSec, flex: 1 },
+  alertOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.72)', alignItems: 'center', justifyContent: 'center', padding: 20 },
+  alertCard: { width: '100%', backgroundColor: COLORS.surface, borderColor: COLORS.border, borderWidth: 1, borderRadius: RADIUS.lg, padding: 20, alignItems: 'center' },
+  alertTitle: { color: COLORS.primary, fontSize: 16, fontWeight: '900', letterSpacing: 2 },
+  alertSubtitle: { color: COLORS.textSec, marginTop: 8, fontSize: 12 },
+  alertTimer: { color: COLORS.warning, fontSize: 56, fontWeight: '900', marginVertical: 6 },
+  alertCancelBtn: { marginTop: 8, backgroundColor: 'rgba(255,59,48,0.16)', borderWidth: 1, borderColor: 'rgba(255,59,48,0.5)', borderRadius: RADIUS.md, paddingHorizontal: 20, paddingVertical: 10 },
+  alertCancelText: { color: COLORS.primary, fontWeight: '900', letterSpacing: 1 },
 });

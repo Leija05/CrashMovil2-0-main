@@ -30,6 +30,9 @@ EMERGENT_LLM_KEY = os.environ.get("EMERGENT_LLM_KEY")
 GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY")
 GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.0-flash-lite")
 ALERT_COUNTDOWN_SECONDS = int(os.environ.get("ALERT_COUNTDOWN_SECONDS", "10"))
+SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
+SUPABASE_SERVICE_ROLE_KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
+SUPABASE_INCIDENTS_TABLE = os.environ.get("SUPABASE_INCIDENTS_TABLE", "incidents")
 WHATSAPP_ACCESS_TOKEN = os.environ.get("WHATSAPP_ACCESS_TOKEN", "")
 WHATSAPP_PHONE_NUMBER_ID = os.environ.get("WHATSAPP_PHONE_NUMBER_ID", "")
 WHATSAPP_API_VERSION = os.environ.get("WHATSAPP_API_VERSION", "v20.0")
@@ -366,15 +369,16 @@ async def create_impact(body: ImpactInput, user: dict = Depends(get_current_user
 
     # Generate AI diagnosis
     diagnosis = None
-    try:
-        diagnosis = await generate_ai_diagnosis(impact_doc, profile)
-        await db.impact_events.update_one(
-            {"id": impact_id},
-            {"$set": {"ai_diagnosis": diagnosis}}
-        )
-        impact_doc["ai_diagnosis"] = diagnosis
-    except Exception as e:
-        logger.error(f"AI diagnosis failed: {e}")
+    if body.g_force > 5:
+        try:
+            diagnosis = await generate_ai_diagnosis(impact_doc, profile)
+            await db.impact_events.update_one(
+                {"id": impact_id},
+                {"$set": {"ai_diagnosis": diagnosis}}
+            )
+            impact_doc["ai_diagnosis"] = diagnosis
+        except Exception as e:
+            logger.error(f"AI diagnosis failed: {e}")
 
     # Send alerts if above threshold
     if body.g_force >= threshold:
@@ -389,6 +393,7 @@ async def create_impact(body: ImpactInput, user: dict = Depends(get_current_user
             logger.error(f"Alert sending failed: {e}")
 
     impact_doc.pop("_id", None)
+    await persist_incident_supabase(user, impact_doc, diagnosis)
     return impact_doc
 
 # ─── Settings Routes ───
@@ -471,7 +476,7 @@ async def generate_ai_diagnosis(impact: dict, profile: dict | None) -> dict:
         api_key=llm_api_key,
         session_id=f"diagnosis-{impact.get('id', uuid.uuid4())}",
         system_message=system_msg
-    ).with_model("gemini", GEMINI_MODEL)
+    ).with_model("gemini", GEMINI_MODEL or "gemini-1.5-flash")
 
     response = await chat.send_message(UserMessage(text=prompt))
 
@@ -492,6 +497,39 @@ async def generate_ai_diagnosis(impact: dict, profile: dict | None) -> dict:
             "priority_level": impact.get("severity", "medio"),
             "raw_response": response
         }
+
+async def persist_incident_supabase(user: dict, impact: dict, diagnosis: dict | None):
+    if not SUPABASE_URL or not SUPABASE_SERVICE_ROLE_KEY:
+        return
+    payload = {
+        "impact_id": impact.get("id"),
+        "user_id": user.get("id"),
+        "user_email": user.get("email"),
+        "g_force": impact.get("g_force"),
+        "severity": impact.get("severity"),
+        "severity_label": impact.get("severity_label"),
+        "location": impact.get("location"),
+        "telemetry": {
+            "acceleration": impact.get("acceleration"),
+            "gyroscope": impact.get("gyroscope"),
+        },
+        "diagnosis": diagnosis,
+        "created_at": impact.get("created_at"),
+    }
+    try:
+        url = f"{SUPABASE_URL.rstrip('/')}/rest/v1/{SUPABASE_INCIDENTS_TABLE}"
+        headers = {
+            "apikey": SUPABASE_SERVICE_ROLE_KEY,
+            "Authorization": f"Bearer {SUPABASE_SERVICE_ROLE_KEY}",
+            "Content-Type": "application/json",
+            "Prefer": "return=minimal",
+        }
+        async with httpx.AsyncClient(timeout=8.0) as http_client:
+            resp = await http_client.post(url, json=payload, headers=headers)
+            if resp.status_code >= 400:
+                logger.warning(f"Supabase persist failed: {resp.status_code} - {resp.text}")
+    except Exception as exc:
+        logger.warning(f"Supabase persist exception: {exc}")
 
 # ─── WhatsApp Service ───
 
