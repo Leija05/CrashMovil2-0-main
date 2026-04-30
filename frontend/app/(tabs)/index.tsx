@@ -9,7 +9,7 @@ import { COLORS, RADIUS, SPACING, severityColor, severityLabel } from '../../src
 import { useAuth } from '../../src/context/AuthContext';
 import { useBluetooth } from '../../src/context/BluetoothContext';
 import { useAppSettings } from '../../src/context/AppSettingsContext';
-import { impactsAPI, settingsAPI } from '../../src/services/api';
+import { contactsAPI, impactsAPI, settingsAPI } from '../../src/services/api';
 
 const MAX_G_RING = 12;
 const SEGMENTS = 40;
@@ -32,6 +32,7 @@ export default function DashboardScreen() {
   const [sending, setSending] = useState(false);
   const [alertResult, setAlertResult] = useState<any | null>(null);
   const [countdownSeconds, setCountdownSeconds] = useState(8);
+  const [hasEmergencyContacts, setHasEmergencyContacts] = useState(true);
 
   useEffect(() => {
     if (telemetry) {
@@ -56,6 +57,19 @@ export default function DashboardScreen() {
       }
     };
     loadSettings();
+  }, [token]);
+
+  useEffect(() => {
+    const loadContactsState = async () => {
+      if (!token) return;
+      try {
+        const contacts = await contactsAPI.list(token);
+        setHasEmergencyContacts(Array.isArray(contacts) && contacts.length > 0);
+      } catch (e) {
+        console.warn('No se pudo validar contactos de emergencia', e);
+      }
+    };
+    loadContactsState();
   }, [token]);
 
   useEffect(() => {
@@ -99,10 +113,21 @@ export default function DashboardScreen() {
     }
     const t = setTimeout(() => setCountdown((v) => (v === null ? null : v - 1)), 1000);
     return () => clearTimeout(t);
-  }, [countdown]);
+  }, [countdown, triggerEmergencyFlow]);
 
-  const triggerEmergencyFlow = async () => {
+  const triggerEmergencyFlow = useCallback(async () => {
     if (!token || !telemetry || sending) return;
+    if (!hasEmergencyContacts) {
+      Alert.alert(
+        'No tienes contactos agregados',
+        'Antes de enviar alertas, registra al menos un contacto de emergencia.',
+        [
+          { text: 'Cancelar', style: 'cancel' },
+          { text: 'Ir a Contactos', onPress: () => router.push('/contacts') },
+        ]
+      );
+      return;
+    }
     setSending(true);
     try {
       const impact = await impactsAPI.create(token, {
@@ -116,13 +141,16 @@ export default function DashboardScreen() {
         latitude: 19.4326,
         longitude: -99.1332,
       });
+      if (impact?.alerted_contacts?.length === 0 && telemetry.g_force >= 10) {
+        Alert.alert('No tienes contactos agregados', 'No se pudo notificar a nadie porque no hay contactos de emergencia.');
+      }
       setAlertResult(impact);
     } catch (e: any) {
       Alert.alert('Error', e.message || 'No se pudo enviar la alerta');
     } finally {
       setSending(false);
     }
-  };
+  }, [token, telemetry, sending, hasEmergencyContacts, router]);
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
@@ -252,15 +280,35 @@ export default function DashboardScreen() {
             <Text style={styles.infoText}>Buscando: {pattern} · HC-05 · HC-10 · HM-10 · MLT-BT05 · CRASH</Text>
           </View>
         )}
+        {!hasEmergencyContacts && (
+          <TouchableOpacity style={styles.warningCard} onPress={() => router.push('/contacts')} activeOpacity={0.85}>
+            <Ionicons name="alert-circle" size={18} color={COLORS.warning} />
+            <View style={{ flex: 1 }}>
+              <Text style={styles.warningTitle}>No tienes contactos de emergencia</Text>
+              <Text style={styles.warningText}>Toca aquí para agregar contactos y habilitar alertas reales.</Text>
+            </View>
+            <Ionicons name="chevron-forward" size={16} color={COLORS.textDim} />
+          </TouchableOpacity>
+        )}
       </ScrollView>
       <Modal visible={countdown !== null} transparent animationType="fade">
         <View style={styles.overlay}>
           <View style={styles.dialog}>
+            <View style={styles.countdownIconWrap}>
+              <Ionicons name="warning" size={24} color="#0A0A0A" />
+            </View>
             <Text style={styles.dialogTitle}>Impacto alto detectado</Text>
-            <Text style={styles.dialogText}>Se enviarán alertas en {countdown}s</Text>
-            <TouchableOpacity style={styles.cancelBtn} onPress={() => setCountdown(null)}>
-              <Text style={styles.cancelText}>Cancelar operación</Text>
-            </TouchableOpacity>
+            <Text style={styles.dialogText}>Se enviarán alertas a tus contactos de emergencia.</Text>
+            <Text style={styles.countdownLabel}>Tiempo restante</Text>
+            <Text style={styles.countdownValue}>{countdown}s</Text>
+            <View style={styles.dialogActions}>
+              <TouchableOpacity style={styles.cancelBtnSoft} onPress={() => setCountdown(null)}>
+                <Text style={styles.cancelSoftText}>Cancelar</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.cancelBtn} onPress={() => { setCountdown(null); triggerEmergencyFlow(); }}>
+                <Text style={styles.cancelText}>Enviar ahora</Text>
+              </TouchableOpacity>
+            </View>
           </View>
         </View>
       </Modal>
@@ -476,11 +524,24 @@ const styles = StyleSheet.create({
     borderWidth: 1, borderColor: '#151B2B', marginTop: 4,
   },
   infoText: { fontSize: 11, color: COLORS.textSec, flex: 1 },
+  warningCard: {
+    flexDirection: 'row', alignItems: 'center', gap: 10,
+    backgroundColor: 'rgba(251,191,36,0.10)', borderColor: 'rgba(251,191,36,0.35)', borderWidth: 1,
+    borderRadius: RADIUS.md, padding: 12, marginTop: 4,
+  },
+  warningTitle: { color: COLORS.warning, fontWeight: '800', fontSize: 13, marginBottom: 2 },
+  warningText: { color: COLORS.textSec, fontSize: 11 },
   overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', alignItems: 'center', justifyContent: 'center', padding: 20 },
   dialog: { width: '100%', backgroundColor: '#0B0F1A', borderWidth: 1, borderColor: '#1A2033', borderRadius: 16, padding: 18 },
+  countdownIconWrap: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center', backgroundColor: COLORS.warning, marginBottom: 10 },
   dialogTitle: { color: COLORS.text, fontSize: 20, fontWeight: '900', marginBottom: 8 },
-  dialogText: { color: COLORS.textSec, fontSize: 14, marginBottom: 12 },
-  cancelBtn: { backgroundColor: COLORS.primary, borderRadius: 999, paddingVertical: 12, alignItems: 'center', marginTop: 8 },
+  dialogText: { color: COLORS.textSec, fontSize: 14, marginBottom: 6 },
+  countdownLabel: { color: COLORS.textDim, fontSize: 11, letterSpacing: 1.2, textTransform: 'uppercase', marginTop: 4 },
+  countdownValue: { color: COLORS.warning, fontSize: 44, fontWeight: '900', marginTop: 2, marginBottom: 12 },
+  dialogActions: { flexDirection: 'row', gap: 8 },
+  cancelBtnSoft: { flex: 1, backgroundColor: '#151B2B', borderRadius: 999, paddingVertical: 12, alignItems: 'center', marginTop: 8 },
+  cancelSoftText: { color: COLORS.text, fontWeight: '800', letterSpacing: 0.7 },
+  cancelBtn: { flex: 1, backgroundColor: COLORS.primary, borderRadius: 999, paddingVertical: 12, alignItems: 'center', marginTop: 8 },
   cancelText: { color: '#FFF', fontWeight: '900', letterSpacing: 1 },
   contactSent: { color: COLORS.text, fontSize: 13, marginBottom: 4 },
 });

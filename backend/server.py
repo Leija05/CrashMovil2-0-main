@@ -4,6 +4,7 @@ ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
 
 from fastapi import FastAPI, APIRouter, HTTPException, Request, Depends
+from fastapi.responses import PlainTextResponse
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 from bson import ObjectId
@@ -14,6 +15,8 @@ import jwt
 import json
 import uuid
 import httpx
+import hmac
+import hashlib
 from datetime import datetime, timezone, timedelta
 from pydantic import BaseModel, Field
 from typing import List, Optional
@@ -29,6 +32,11 @@ GEMINI_MODEL = os.environ.get("GEMINI_MODEL") or os.environ.get("GEMINI_API_KEY"
 WHATSAPP_ACCESS_TOKEN = os.environ.get("WHATSAPP_ACCESS_TOKEN", "")
 WHATSAPP_PHONE_NUMBER_ID = os.environ.get("WHATSAPP_PHONE_NUMBER_ID", "")
 WHATSAPP_API_VERSION = os.environ.get("WHATSAPP_API_VERSION", "v20.0")
+WHATSAPP_WEBHOOK_VERIFY_TOKEN = os.environ.get("WHATSAPP_WEBHOOK_VERIFY_TOKEN", "")
+WHATSAPP_APP_SECRET = os.environ.get("WHATSAPP_APP_SECRET", "")
+WHATSAPP_COLLISION_TEMPLATE_NAME = os.environ.get("WHATSAPP_COLLISION_TEMPLATE_NAME", "")
+WHATSAPP_TEMPLATE_LANGUAGE = os.environ.get("WHATSAPP_TEMPLATE_LANGUAGE", "es_MX")
+WHATSAPP_TEMPLATE_FALLBACK_ON_24H = os.environ.get("WHATSAPP_TEMPLATE_FALLBACK_ON_24H", "true").lower() == "true"
 
 client = AsyncIOMotorClient(MONGO_URL)
 db = client[DB_NAME]
@@ -343,6 +351,15 @@ async def create_impact(body: ImpactInput, user: dict = Depends(get_current_user
 
     # Send alerts if above threshold
     if body.g_force >= threshold:
+        contact_count = await db.emergency_contacts.count_documents({"user_id": user["id"], "verified": True})
+        if contact_count == 0:
+            msg = "No tienes contactos de emergencia verificados"
+            logger.warning(msg)
+            await db.impact_events.update_one({"id": impact_id}, {"$set": {"alerts_sent": False, "alert_error": msg}})
+            impact_doc["alerts_sent"] = False
+            impact_doc["alert_error"] = msg
+            impact_doc.pop("_id", None)
+            return impact_doc
         try:
             alerted_contacts = await send_emergency_alerts(user, impact_doc, profile, diagnosis)
             await db.impact_events.update_one({"id": impact_id}, {"$set": {"alerts_sent": True, "alerted_contacts": alerted_contacts}})
@@ -392,7 +409,18 @@ async def receive_telemetry(body: TelemetryInput, user: dict = Depends(get_curre
 # ─── AI Diagnosis (Gemini 2.5 Flash) ───
 
 async def generate_ai_diagnosis(impact: dict, profile: dict | None) -> dict:
-    from emergentintegrations.llm.chat import LlmChat, UserMessage
+    try:
+        from emergentintegrations.llm.chat import LlmChat, UserMessage
+    except ImportError as exc:
+        logger.warning(f"emergentintegrations no disponible, usando diagnóstico local: {exc}")
+        return {
+            "severity_assessment": f"Impacto de {impact.get('g_force', 0):.1f}G clasificado como {impact.get('severity_label', 'N/A')}",
+            "possible_injuries": ["Estimación local: verificar lesiones cervicales, tórax y extremidades"],
+            "first_aid_steps": ["Llamar al 911", "No mover al paciente", "Controlar respiración y pulso"],
+            "emergency_recommendations": ["Esperar atención médica y compartir ubicación del accidente"],
+            "priority_level": impact.get("severity", "medio"),
+            "fallback_reason": "missing_emergentintegrations"
+        }
 
     profile_info = ""
     if profile:
@@ -454,7 +482,7 @@ async def generate_ai_diagnosis(impact: dict, profile: dict | None) -> dict:
 
 # ─── WhatsApp Service ───
 
-async def send_whatsapp_message(phone: str, message: str):
+async def send_whatsapp_message(phone: str, message: str, template_params: Optional[List[str]] = None):
     url = f"https://graph.facebook.com/{WHATSAPP_API_VERSION}/{WHATSAPP_PHONE_NUMBER_ID}/messages"
     headers = {
         "Authorization": f"Bearer {WHATSAPP_ACCESS_TOKEN}",
@@ -466,9 +494,51 @@ async def send_whatsapp_message(phone: str, message: str):
         "type": "text",
         "text": {"body": message}
     }
+    using_template = bool(WHATSAPP_COLLISION_TEMPLATE_NAME)
+    if using_template:
+        components = []
+        if template_params:
+            components = [{
+                "type": "body",
+                "parameters": [{"type": "text", "text": str(p)} for p in template_params]
+            }]
+        payload = {
+            "messaging_product": "whatsapp",
+            "to": phone,
+            "type": "template",
+            "template": {
+                "name": WHATSAPP_COLLISION_TEMPLATE_NAME,
+                "language": {"code": WHATSAPP_TEMPLATE_LANGUAGE},
+                **({"components": components} if components else {})
+            }
+        }
+
     async with httpx.AsyncClient() as http_client:
         resp = await http_client.post(url, json=payload, headers=headers)
         logger.info(f"WhatsApp response: {resp.status_code} - {resp.text}")
+        response_json = resp.json() if resp.text else {}
+        error_code = (((response_json or {}).get("error") or {}).get("code"))
+
+        # Error 131047 = fuera de ventana de 24h: solo se permite plantilla.
+        # Si se usó plantilla y aún falla, devolvemos error directo.
+        if resp.status_code >= 400 and error_code == 131047:
+            raise HTTPException(status_code=resp.status_code, detail=f"WhatsApp 24h window error: {resp.text}")
+
+        # Fallback a texto solo para errores que NO sean de ventana 24h y
+        # únicamente cuando NO se requiere plantilla para re-contacto.
+        if resp.status_code >= 400 and using_template and WHATSAPP_TEMPLATE_FALLBACK_ON_24H and error_code not in (131047,):
+            fallback_payload = {
+                "messaging_product": "whatsapp",
+                "to": phone,
+                "type": "text",
+                "text": {"body": message}
+            }
+            fallback_resp = await http_client.post(url, json=fallback_payload, headers=headers)
+            logger.info(f"WhatsApp fallback response: {fallback_resp.status_code} - {fallback_resp.text}")
+            if fallback_resp.status_code < 400:
+                return fallback_resp.json()
+        if resp.status_code >= 400:
+            raise HTTPException(status_code=resp.status_code, detail=f"WhatsApp API error: {resp.text}")
         return resp.json()
 
 async def send_emergency_alerts(user: dict, impact: dict, profile: dict | None, diagnosis: dict | None):
@@ -504,9 +574,15 @@ async def send_emergency_alerts(user: dict, impact: dict, profile: dict | None, 
     )
 
     alerted_contacts = []
+    template_values = [
+        impact.get("severity_label", "N/A"),
+        diagnosis.get("severity_assessment", "Sin diagnóstico IA") if diagnosis else "Sin diagnóstico IA",
+        (diagnosis.get("emergency_recommendations") or ["Contactar servicios de emergencia"])[0] if diagnosis else "Contactar servicios de emergencia",
+        f"https://maps.google.com/?q={impact['location']['latitude']},{impact['location']['longitude']}" if impact.get("location") and impact["location"].get("latitude") else "Ubicación no disponible"
+    ]
     for contact in contacts:
         try:
-            await send_whatsapp_message(contact["phone"], message)
+            await send_whatsapp_message(contact["phone"], message, template_params=template_values)
             logger.info(f"Alert sent to {contact['name']} ({contact['phone']})")
             alerted_contacts.append({"id": contact.get("id"), "name": contact.get("name"), "phone": contact.get("phone")})
         except Exception as e:
@@ -522,6 +598,38 @@ async def root():
 @api_router.get("/health")
 async def health():
     return {"status": "healthy", "database": "connected"}
+
+# ─── WhatsApp Webhook ───
+
+@app.get("/webhook/whatsapp")
+async def whatsapp_webhook_verify(request: Request):
+    mode = request.query_params.get("hub.mode")
+    token = request.query_params.get("hub.verify_token")
+    challenge = request.query_params.get("hub.challenge")
+
+    if mode == "subscribe" and token == WHATSAPP_WEBHOOK_VERIFY_TOKEN and challenge:
+        logger.info("WhatsApp webhook verificado correctamente")
+        return PlainTextResponse(content=challenge)
+    logger.warning("Intento de verificación webhook inválido")
+    raise HTTPException(status_code=403, detail="Webhook verification failed")
+
+@app.post("/webhook/whatsapp")
+async def whatsapp_webhook_receive(request: Request):
+    raw_body = await request.body()
+    signature = request.headers.get("X-Hub-Signature-256", "")
+    if WHATSAPP_APP_SECRET and signature.startswith("sha256="):
+        expected_hash = hmac.new(
+            WHATSAPP_APP_SECRET.encode("utf-8"),
+            raw_body,
+            hashlib.sha256
+        ).hexdigest()
+        if not hmac.compare_digest(signature[7:], expected_hash):
+            logger.warning("Firma inválida en webhook de WhatsApp")
+            raise HTTPException(status_code=403, detail="Invalid webhook signature")
+
+    payload = json.loads(raw_body.decode("utf-8"))
+    logger.info(f"WhatsApp webhook event: {json.dumps(payload)}")
+    return {"status": "received"}
 
 # ─── Startup ───
 
