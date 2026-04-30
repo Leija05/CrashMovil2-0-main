@@ -15,6 +15,8 @@ import jwt
 import json
 import uuid
 import httpx
+import hmac
+import hashlib
 from datetime import datetime, timezone, timedelta
 from pydantic import BaseModel, Field
 from typing import List, Optional
@@ -31,6 +33,10 @@ WHATSAPP_ACCESS_TOKEN = os.environ.get("WHATSAPP_ACCESS_TOKEN", "")
 WHATSAPP_PHONE_NUMBER_ID = os.environ.get("WHATSAPP_PHONE_NUMBER_ID", "")
 WHATSAPP_API_VERSION = os.environ.get("WHATSAPP_API_VERSION", "v20.0")
 WHATSAPP_WEBHOOK_VERIFY_TOKEN = os.environ.get("WHATSAPP_WEBHOOK_VERIFY_TOKEN", "")
+WHATSAPP_APP_SECRET = os.environ.get("WHATSAPP_APP_SECRET", "")
+WHATSAPP_COLLISION_TEMPLATE_NAME = os.environ.get("WHATSAPP_COLLISION_TEMPLATE_NAME", "")
+WHATSAPP_TEMPLATE_LANGUAGE = os.environ.get("WHATSAPP_TEMPLATE_LANGUAGE", "es_MX")
+WHATSAPP_TEMPLATE_FALLBACK_ON_24H = os.environ.get("WHATSAPP_TEMPLATE_FALLBACK_ON_24H", "true").lower() == "true"
 
 client = AsyncIOMotorClient(MONGO_URL)
 db = client[DB_NAME]
@@ -488,9 +494,31 @@ async def send_whatsapp_message(phone: str, message: str):
         "type": "text",
         "text": {"body": message}
     }
+    if WHATSAPP_COLLISION_TEMPLATE_NAME:
+        payload = {
+            "messaging_product": "whatsapp",
+            "to": phone,
+            "type": "template",
+            "template": {
+                "name": WHATSAPP_COLLISION_TEMPLATE_NAME,
+                "language": {"code": WHATSAPP_TEMPLATE_LANGUAGE}
+            }
+        }
+
     async with httpx.AsyncClient() as http_client:
         resp = await http_client.post(url, json=payload, headers=headers)
         logger.info(f"WhatsApp response: {resp.status_code} - {resp.text}")
+        if resp.status_code >= 400 and WHATSAPP_COLLISION_TEMPLATE_NAME and WHATSAPP_TEMPLATE_FALLBACK_ON_24H:
+            fallback_payload = {
+                "messaging_product": "whatsapp",
+                "to": phone,
+                "type": "text",
+                "text": {"body": message}
+            }
+            fallback_resp = await http_client.post(url, json=fallback_payload, headers=headers)
+            logger.info(f"WhatsApp fallback response: {fallback_resp.status_code} - {fallback_resp.text}")
+            if fallback_resp.status_code < 400:
+                return fallback_resp.json()
         if resp.status_code >= 400:
             raise HTTPException(status_code=resp.status_code, detail=f"WhatsApp API error: {resp.text}")
         return resp.json()
@@ -563,7 +591,19 @@ async def whatsapp_webhook_verify(request: Request):
 
 @app.post("/webhook/whatsapp")
 async def whatsapp_webhook_receive(request: Request):
-    payload = await request.json()
+    raw_body = await request.body()
+    signature = request.headers.get("X-Hub-Signature-256", "")
+    if WHATSAPP_APP_SECRET and signature.startswith("sha256="):
+        expected_hash = hmac.new(
+            WHATSAPP_APP_SECRET.encode("utf-8"),
+            raw_body,
+            hashlib.sha256
+        ).hexdigest()
+        if not hmac.compare_digest(signature[7:], expected_hash):
+            logger.warning("Firma inválida en webhook de WhatsApp")
+            raise HTTPException(status_code=403, detail="Invalid webhook signature")
+
+    payload = json.loads(raw_body.decode("utf-8"))
     logger.info(f"WhatsApp webhook event: {json.dumps(payload)}")
     return {"status": "received"}
 
