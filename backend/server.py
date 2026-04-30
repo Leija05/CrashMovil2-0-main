@@ -368,10 +368,18 @@ async def create_impact(body: ImpactInput, user: dict = Depends(get_current_user
             impact_doc.pop("_id", None)
             return impact_doc
         try:
-            alerted_contacts = await send_emergency_alerts(user, impact_doc, profile, diagnosis)
-            await db.impact_events.update_one({"id": impact_id}, {"$set": {"alerts_sent": True, "alerted_contacts": alerted_contacts}})
-            impact_doc["alerts_sent"] = True
+            alerted_contacts, alert_errors = await send_emergency_alerts(user, impact_doc, profile, diagnosis)
+            update_fields = {
+                "alerts_sent": len(alerted_contacts) > 0,
+                "alerted_contacts": alerted_contacts
+            }
+            if alert_errors:
+                update_fields["alert_error"] = "; ".join(alert_errors)
+            await db.impact_events.update_one({"id": impact_id}, {"$set": update_fields})
+            impact_doc["alerts_sent"] = len(alerted_contacts) > 0
             impact_doc["alerted_contacts"] = alerted_contacts
+            if alert_errors:
+                impact_doc["alert_error"] = "; ".join(alert_errors)
         except Exception as e:
             logger.error(f"Alert sending failed: {e}")
 
@@ -545,6 +553,9 @@ async def generate_ai_diagnosis(impact: dict, profile: dict | None) -> dict:
 # ─── WhatsApp Service ───
 
 async def send_whatsapp_message(phone: str, message: str, template_params: Optional[List[str]] = None):
+    if not WHATSAPP_ACCESS_TOKEN or not WHATSAPP_PHONE_NUMBER_ID:
+        raise HTTPException(status_code=500, detail="WhatsApp no está configurado: faltan credenciales/token")
+
     normalized_phone = "".join(ch for ch in phone if ch.isdigit())
     if phone.strip().startswith("+"):
         normalized_phone = f"+{normalized_phone}"
@@ -633,7 +644,7 @@ async def send_emergency_alerts(user: dict, impact: dict, profile: dict | None, 
 
     if not contacts:
         logger.warning("No verified contacts to alert")
-        return []
+        return [], ["No hay contactos verificados para alertar"]
 
     location_str = ""
     if impact.get("location") and impact["location"].get("latitude"):
@@ -654,6 +665,7 @@ async def send_emergency_alerts(user: dict, impact: dict, profile: dict | None, 
     )
 
     alerted_contacts = []
+    alert_errors = []
     template_values = [
         impact.get("severity_label", "N/A"),
         diagnosis_summary,
@@ -666,8 +678,10 @@ async def send_emergency_alerts(user: dict, impact: dict, profile: dict | None, 
             logger.info(f"Alert sent to {contact['name']} ({contact['phone']})")
             alerted_contacts.append({"id": contact.get("id"), "name": contact.get("name"), "phone": contact.get("phone")})
         except Exception as e:
-            logger.error(f"Failed to alert {contact['name']}: {e}")
-    return alerted_contacts
+            err_msg = f"{contact.get('name', 'Contacto')} ({contact.get('phone', 'sin teléfono')}): {e}"
+            logger.error(f"Failed to alert {err_msg}")
+            alert_errors.append(err_msg)
+    return alerted_contacts, alert_errors
 
 # ─── Health Check ───
 
