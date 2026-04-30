@@ -482,7 +482,7 @@ async def generate_ai_diagnosis(impact: dict, profile: dict | None) -> dict:
 
 # ─── WhatsApp Service ───
 
-async def send_whatsapp_message(phone: str, message: str):
+async def send_whatsapp_message(phone: str, message: str, template_params: Optional[List[str]] = None):
     url = f"https://graph.facebook.com/{WHATSAPP_API_VERSION}/{WHATSAPP_PHONE_NUMBER_ID}/messages"
     headers = {
         "Authorization": f"Bearer {WHATSAPP_ACCESS_TOKEN}",
@@ -496,13 +496,20 @@ async def send_whatsapp_message(phone: str, message: str):
     }
     using_template = bool(WHATSAPP_COLLISION_TEMPLATE_NAME)
     if using_template:
+        components = []
+        if template_params:
+            components = [{
+                "type": "body",
+                "parameters": [{"type": "text", "text": str(p)} for p in template_params]
+            }]
         payload = {
             "messaging_product": "whatsapp",
             "to": phone,
             "type": "template",
             "template": {
                 "name": WHATSAPP_COLLISION_TEMPLATE_NAME,
-                "language": {"code": WHATSAPP_TEMPLATE_LANGUAGE}
+                "language": {"code": WHATSAPP_TEMPLATE_LANGUAGE},
+                **({"components": components} if components else {})
             }
         }
 
@@ -517,8 +524,9 @@ async def send_whatsapp_message(phone: str, message: str):
         if resp.status_code >= 400 and error_code == 131047:
             raise HTTPException(status_code=resp.status_code, detail=f"WhatsApp 24h window error: {resp.text}")
 
-        # Fallback a texto solo para errores que NO sean de ventana 24h.
-        if resp.status_code >= 400 and using_template and WHATSAPP_TEMPLATE_FALLBACK_ON_24H:
+        # Fallback a texto solo para errores que NO sean de ventana 24h y
+        # únicamente cuando NO se requiere plantilla para re-contacto.
+        if resp.status_code >= 400 and using_template and WHATSAPP_TEMPLATE_FALLBACK_ON_24H and error_code not in (131047,):
             fallback_payload = {
                 "messaging_product": "whatsapp",
                 "to": phone,
@@ -566,9 +574,15 @@ async def send_emergency_alerts(user: dict, impact: dict, profile: dict | None, 
     )
 
     alerted_contacts = []
+    template_values = [
+        impact.get("severity_label", "N/A"),
+        diagnosis.get("severity_assessment", "Sin diagnóstico IA") if diagnosis else "Sin diagnóstico IA",
+        (diagnosis.get("emergency_recommendations") or ["Contactar servicios de emergencia"])[0] if diagnosis else "Contactar servicios de emergencia",
+        f"https://maps.google.com/?q={impact['location']['latitude']},{impact['location']['longitude']}" if impact.get("location") and impact["location"].get("latitude") else "Ubicación no disponible"
+    ]
     for contact in contacts:
         try:
-            await send_whatsapp_message(contact["phone"], message)
+            await send_whatsapp_message(contact["phone"], message, template_params=template_values)
             logger.info(f"Alert sent to {contact['name']} ({contact['phone']})")
             alerted_contacts.append({"id": contact.get("id"), "name": contact.get("name"), "phone": contact.get("phone")})
         except Exception as e:
