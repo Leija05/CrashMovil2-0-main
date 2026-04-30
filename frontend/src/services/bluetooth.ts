@@ -50,10 +50,8 @@ class BluetoothTelemetryService {
 
   private connectedDevice: Device | null = null;
   private monitorSubscription: Subscription | null = null;
-  private simulationTimer: any = null;
   private readBuffer = '';
   private connected = false;
-  private simulationEnabled = false;
 
   constructor() {
     this.bleManager.setLogLevel(LogLevel.None);
@@ -62,7 +60,6 @@ class BluetoothTelemetryService {
   // --- Helpers de Estado ---
   isNativeAvailable() { return Platform.OS !== 'web'; }
   isConnected() { return this.connected; }
-  isSimulationMode() { return this.simulationEnabled; }
   getConnectedDevice() { return this.connectedDevice; }
 
   // --- Gestión de Listeners ---
@@ -106,7 +103,6 @@ class BluetoothTelemetryService {
   }
 
   async startDeviceScan(onDeviceFound: (device: Device) => void) {
-    if (this.simulationEnabled) return;
     const hasPermission = await this.requestPermissions();
     if (!hasPermission) { this.emitStatus('error', 'Permisos denegados'); return; }
 
@@ -250,65 +246,6 @@ class BluetoothTelemetryService {
       console.warn("Error parseando línea:", raw);
     }
     return null;
-  }
-
-  // --- Modo Simulación ---
-  setSimulationMode(e: boolean) {
-    this.simulationEnabled = e;
-    if (!e) this.stopSimulation();
-  }
-
-  startSimulation() {
-    this.simulationEnabled = true;
-    this.connected = true;
-    this.emitStatus('connected', 'Simulador Activo');
-
-    this.simulationTimer = setInterval(() => {
-      this.emitTelemetry({
-        acceleration_x: Number((Math.random() * 0.2).toFixed(2)),
-        acceleration_y: Number((Math.random() * 0.2).toFixed(2)),
-        acceleration_z: Number((0.98 + Math.random() * 0.05).toFixed(2)),
-        gyroscope_x: 0,
-        gyroscope_y: 0,
-        gyroscope_z: 0,
-        g_force: 1.0,
-        timestamp: Date.now()
-      });
-    }, 500);
-  }
-
-
-  simulateImpact(severity: 'low' | 'medium' | 'high' | 'critical') {
-    const ranges: Record<typeof severity, [number, number]> = {
-      low: [3.5, 4.9],
-      medium: [6.5, 9.5],
-      high: [10.5, 14.5],
-      critical: [15.5, 22.0],
-    };
-    const [min, max] = ranges[severity];
-    const gForce = Number((Math.random() * (max - min) + min).toFixed(2));
-    const data: TelemetryData = {
-      acceleration_x: Number(((Math.random() * 12) - 6).toFixed(2)),
-      acceleration_y: Number(((Math.random() * 12) - 6).toFixed(2)),
-      acceleration_z: Number((gForce * 9.81).toFixed(2)),
-      gyroscope_x: Number(((Math.random() * 4) - 2).toFixed(2)),
-      gyroscope_y: Number(((Math.random() * 4) - 2).toFixed(2)),
-      gyroscope_z: Number(((Math.random() * 4) - 2).toFixed(2)),
-      g_force: gForce,
-      timestamp: Date.now(),
-    };
-
-    this.connected = true;
-    this.emitStatus('connected', 'Simulación de impacto activa');
-    this.emitTelemetry(data);
-
-    return data;
-  }
-
-  stopSimulation() {
-    if (this.simulationTimer) clearInterval(this.simulationTimer);
-    this.connected = false;
-    this.emitStatus('idle');
   }
 
   // --- Desconexión ---

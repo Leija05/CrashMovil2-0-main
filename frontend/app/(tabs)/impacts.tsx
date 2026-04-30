@@ -1,14 +1,12 @@
 import React, { useState, useCallback } from 'react';
 import {
-  View, Text, TouchableOpacity, StyleSheet, FlatList, RefreshControl, ActivityIndicator, Alert,
+  View, Text, TouchableOpacity, StyleSheet, FlatList, RefreshControl, ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { useAuth } from '../../src/context/AuthContext';
 import { impactsAPI } from '../../src/services/api';
-import { bluetoothService } from '../../src/services/bluetooth';
-import { useAppSettings } from '../../src/context/AppSettingsContext';
 import { COLORS, RADIUS, SPACING } from '../../src/theme';
 
 function sevColor(s: string) {
@@ -21,11 +19,9 @@ function sevColor(s: string) {
 export default function ImpactsScreen() {
   const { token } = useAuth();
   const router = useRouter();
-  const { developerMode } = useAppSettings();
   const [impacts, setImpacts] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [simulating, setSimulating] = useState(false);
 
   const fetchImpacts = useCallback(async () => {
     if (!token) return;
@@ -37,19 +33,6 @@ export default function ImpactsScreen() {
   }, [token]);
 
   useFocusEffect(useCallback(() => { fetchImpacts(); }, [fetchImpacts]));
-
-  const simulateImpact = async (severity: 'low' | 'medium' | 'high' | 'critical') => {
-    if (!token) return;
-    setSimulating(true);
-    try {
-      bluetoothService.simulateImpact(severity);
-      Alert.alert('Simulación iniciada', 'Se envió el impacto simulado. Continúa el flujo en pantalla principal.');
-      router.push('/(tabs)');
-    } catch (e: any) {
-      console.error(e);
-      Alert.alert('Error', 'No se pudo simular el impacto');
-    } finally { setSimulating(false); }
-  };
 
   const formatDate = (iso: string) => {
     const d = new Date(iso);
@@ -90,34 +73,6 @@ export default function ImpactsScreen() {
         </View>
       </View>
 
-      {/* Simulate buttons only in developer mode */}
-      {developerMode && (
-        <View style={styles.simSection}>
-          <View style={styles.simHeader}>
-            <Ionicons name="construct" size={14} color={COLORS.warning} />
-            <Text style={styles.simLabel}>SIMULAR IMPACTO (MODO DEV)</Text>
-          </View>
-          <View style={styles.simBtns}>
-            {(['low', 'medium', 'high', 'critical'] as const).map((sev) => (
-              <TouchableOpacity
-                key={sev}
-                testID={`simulate-${sev}-btn`}
-                style={[styles.simBtn, { borderColor: sevColor(sev) }]}
-                onPress={() => simulateImpact(sev)}
-                disabled={simulating}
-                activeOpacity={0.7}
-              >
-                {simulating ? <ActivityIndicator size="small" color={sevColor(sev)} /> : (
-                  <Text style={[styles.simBtnText, { color: sevColor(sev) }]}>
-                    {sev === 'low' ? 'BAJO' : sev === 'medium' ? 'MEDIO' : sev === 'high' ? 'ALTO' : 'CRÍTICO'}
-                  </Text>
-                )}
-              </TouchableOpacity>
-            ))}
-          </View>
-        </View>
-      )}
-
       {loading ? (
         <View style={styles.center}><ActivityIndicator size="large" color={COLORS.primary} /></View>
       ) : (
@@ -132,7 +87,7 @@ export default function ImpactsScreen() {
               <View style={styles.emptyIcon}><Ionicons name="shield-checkmark" size={34} color={COLORS.success} /></View>
               <Text style={styles.emptyText}>Sin impactos registrados</Text>
               <Text style={styles.emptySubtext}>
-                {developerMode ? 'Usa los botones de simulación para probar' : 'Cuando detectemos un impacto aparecerá aquí'}
+                {'Cuando detectemos un impacto aparecerá aquí'}
               </Text>
             </View>
           }
@@ -147,12 +102,6 @@ const styles = StyleSheet.create({
   headerSection: { paddingHorizontal: SPACING.md, paddingTop: SPACING.md, paddingBottom: 6 },
   title: { fontSize: 22, fontWeight: '900', color: COLORS.text, letterSpacing: 3 },
   countText: { fontSize: 12, color: COLORS.textSec, marginTop: 4 },
-  simSection: { paddingHorizontal: SPACING.md, paddingVertical: SPACING.sm, backgroundColor: 'rgba(251,191,36,0.04)', borderTopWidth: 1, borderBottomWidth: 1, borderColor: 'rgba(251,191,36,0.12)', marginBottom: 8 },
-  simHeader: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 8 },
-  simLabel: { fontSize: 10, fontWeight: '900', color: COLORS.warning, letterSpacing: 2 },
-  simBtns: { flexDirection: 'row', gap: 8 },
-  simBtn: { flex: 1, paddingVertical: 10, borderRadius: RADIUS.md, borderWidth: 1, alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.02)' },
-  simBtnText: { fontSize: 10, fontWeight: '900', letterSpacing: 1 },
   list: { paddingHorizontal: SPACING.md, paddingVertical: SPACING.sm, paddingBottom: 20 },
   card: { flexDirection: 'row', alignItems: 'stretch', backgroundColor: COLORS.surface, borderRadius: RADIUS.lg, marginBottom: 10, borderWidth: 1, borderColor: COLORS.border, overflow: 'hidden' },
   sevStrip: { width: 4 },
