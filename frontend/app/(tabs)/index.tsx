@@ -99,9 +99,9 @@ export default function DashboardScreen() {
     }
     const t = setTimeout(() => setCountdown((v) => (v === null ? null : v - 1)), 1000);
     return () => clearTimeout(t);
-  }, [countdown]);
+  }, [countdown, triggerEmergencyFlow]);
 
-  const triggerEmergencyFlow = async () => {
+  const triggerEmergencyFlow = useCallback(async () => {
     if (!token || !telemetry || sending) return;
     setSending(true);
     try {
@@ -122,7 +122,7 @@ export default function DashboardScreen() {
     } finally {
       setSending(false);
     }
-  };
+  }, [token, telemetry, sending]);
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
@@ -256,11 +256,21 @@ export default function DashboardScreen() {
       <Modal visible={countdown !== null} transparent animationType="fade">
         <View style={styles.overlay}>
           <View style={styles.dialog}>
+            <View style={styles.countdownIconWrap}>
+              <Ionicons name="warning" size={24} color="#0A0A0A" />
+            </View>
             <Text style={styles.dialogTitle}>Impacto alto detectado</Text>
-            <Text style={styles.dialogText}>Se enviarán alertas en {countdown}s</Text>
-            <TouchableOpacity style={styles.cancelBtn} onPress={() => setCountdown(null)}>
-              <Text style={styles.cancelText}>Cancelar operación</Text>
-            </TouchableOpacity>
+            <Text style={styles.dialogText}>Se enviarán alertas a tus contactos de emergencia.</Text>
+            <Text style={styles.countdownLabel}>Tiempo restante</Text>
+            <Text style={styles.countdownValue}>{countdown}s</Text>
+            <View style={styles.dialogActions}>
+              <TouchableOpacity style={styles.cancelBtnSoft} onPress={() => setCountdown(null)}>
+                <Text style={styles.cancelSoftText}>Cancelar</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.cancelBtn} onPress={() => { setCountdown(null); triggerEmergencyFlow(); }}>
+                <Text style={styles.cancelText}>Enviar ahora</Text>
+              </TouchableOpacity>
+            </View>
           </View>
         </View>
       </Modal>
@@ -478,9 +488,15 @@ const styles = StyleSheet.create({
   infoText: { fontSize: 11, color: COLORS.textSec, flex: 1 },
   overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', alignItems: 'center', justifyContent: 'center', padding: 20 },
   dialog: { width: '100%', backgroundColor: '#0B0F1A', borderWidth: 1, borderColor: '#1A2033', borderRadius: 16, padding: 18 },
+  countdownIconWrap: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center', backgroundColor: COLORS.warning, marginBottom: 10 },
   dialogTitle: { color: COLORS.text, fontSize: 20, fontWeight: '900', marginBottom: 8 },
-  dialogText: { color: COLORS.textSec, fontSize: 14, marginBottom: 12 },
-  cancelBtn: { backgroundColor: COLORS.primary, borderRadius: 999, paddingVertical: 12, alignItems: 'center', marginTop: 8 },
+  dialogText: { color: COLORS.textSec, fontSize: 14, marginBottom: 6 },
+  countdownLabel: { color: COLORS.textDim, fontSize: 11, letterSpacing: 1.2, textTransform: 'uppercase', marginTop: 4 },
+  countdownValue: { color: COLORS.warning, fontSize: 44, fontWeight: '900', marginTop: 2, marginBottom: 12 },
+  dialogActions: { flexDirection: 'row', gap: 8 },
+  cancelBtnSoft: { flex: 1, backgroundColor: '#151B2B', borderRadius: 999, paddingVertical: 12, alignItems: 'center', marginTop: 8 },
+  cancelSoftText: { color: COLORS.text, fontWeight: '800', letterSpacing: 0.7 },
+  cancelBtn: { flex: 1, backgroundColor: COLORS.primary, borderRadius: 999, paddingVertical: 12, alignItems: 'center', marginTop: 8 },
   cancelText: { color: '#FFF', fontWeight: '900', letterSpacing: 1 },
   contactSent: { color: COLORS.text, fontSize: 13, marginBottom: 4 },
 });

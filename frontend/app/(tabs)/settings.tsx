@@ -75,6 +75,24 @@ export default function SettingsScreen() {
     await setDeveloperMode(value);
   };
 
+  const confirmLogout = () => {
+    Alert.alert(
+      'Cerrar sesión',
+      '¿Seguro que quieres salir de tu cuenta?',
+      [
+        { text: 'No', style: 'cancel' },
+        {
+          text: 'Sí',
+          style: 'destructive',
+          onPress: async () => {
+            await logout();
+            router.replace('/login');
+          }
+        }
+      ]
+    );
+  };
+
   if (loading) {
     return (
       <SafeAreaView style={styles.container}>
@@ -246,7 +264,7 @@ export default function SettingsScreen() {
           </View>
 
           {/* ─── Session ─── */}
-          <TouchableOpacity testID="logout-btn" style={styles.logoutBtn} onPress={logout}>
+          <TouchableOpacity testID="logout-btn" style={styles.logoutBtn} onPress={confirmLogout}>
             <Ionicons name="log-out-outline" size={18} color={COLORS.primary} />
             <Text style={styles.logoutText}>Cerrar sesión</Text>
           </TouchableOpacity>

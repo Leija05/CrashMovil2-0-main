@@ -392,7 +392,18 @@ async def receive_telemetry(body: TelemetryInput, user: dict = Depends(get_curre
 # ─── AI Diagnosis (Gemini 2.5 Flash) ───
 
 async def generate_ai_diagnosis(impact: dict, profile: dict | None) -> dict:
-    from emergentintegrations.llm.chat import LlmChat, UserMessage
+    try:
+        from emergentintegrations.llm.chat import LlmChat, UserMessage
+    except ImportError as exc:
+        logger.warning(f"emergentintegrations no disponible, usando diagnóstico local: {exc}")
+        return {
+            "severity_assessment": f"Impacto de {impact.get('g_force', 0):.1f}G clasificado como {impact.get('severity_label', 'N/A')}",
+            "possible_injuries": ["Estimación local: verificar lesiones cervicales, tórax y extremidades"],
+            "first_aid_steps": ["Llamar al 911", "No mover al paciente", "Controlar respiración y pulso"],
+            "emergency_recommendations": ["Esperar atención médica y compartir ubicación del accidente"],
+            "priority_level": impact.get("severity", "medio"),
+            "fallback_reason": "missing_emergentintegrations"
+        }
 
     profile_info = ""
     if profile:
@@ -469,6 +480,8 @@ async def send_whatsapp_message(phone: str, message: str):
     async with httpx.AsyncClient() as http_client:
         resp = await http_client.post(url, json=payload, headers=headers)
         logger.info(f"WhatsApp response: {resp.status_code} - {resp.text}")
+        if resp.status_code >= 400:
+            raise HTTPException(status_code=resp.status_code, detail=f"WhatsApp API error: {resp.text}")
         return resp.json()
 
 async def send_emergency_alerts(user: dict, impact: dict, profile: dict | None, diagnosis: dict | None):
