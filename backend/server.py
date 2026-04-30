@@ -4,6 +4,7 @@ ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
 
 from fastapi import FastAPI, APIRouter, HTTPException, Request, Depends
+from fastapi.responses import PlainTextResponse
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 from bson import ObjectId
@@ -29,6 +30,7 @@ GEMINI_MODEL = os.environ.get("GEMINI_MODEL") or os.environ.get("GEMINI_API_KEY"
 WHATSAPP_ACCESS_TOKEN = os.environ.get("WHATSAPP_ACCESS_TOKEN", "")
 WHATSAPP_PHONE_NUMBER_ID = os.environ.get("WHATSAPP_PHONE_NUMBER_ID", "")
 WHATSAPP_API_VERSION = os.environ.get("WHATSAPP_API_VERSION", "v20.0")
+WHATSAPP_WEBHOOK_VERIFY_TOKEN = os.environ.get("WHATSAPP_WEBHOOK_VERIFY_TOKEN", "")
 
 client = AsyncIOMotorClient(MONGO_URL)
 db = client[DB_NAME]
@@ -544,6 +546,26 @@ async def root():
 @api_router.get("/health")
 async def health():
     return {"status": "healthy", "database": "connected"}
+
+# ─── WhatsApp Webhook ───
+
+@app.get("/webhook/whatsapp")
+async def whatsapp_webhook_verify(request: Request):
+    mode = request.query_params.get("hub.mode")
+    token = request.query_params.get("hub.verify_token")
+    challenge = request.query_params.get("hub.challenge")
+
+    if mode == "subscribe" and token == WHATSAPP_WEBHOOK_VERIFY_TOKEN and challenge:
+        logger.info("WhatsApp webhook verificado correctamente")
+        return PlainTextResponse(content=challenge)
+    logger.warning("Intento de verificación webhook inválido")
+    raise HTTPException(status_code=403, detail="Webhook verification failed")
+
+@app.post("/webhook/whatsapp")
+async def whatsapp_webhook_receive(request: Request):
+    payload = await request.json()
+    logger.info(f"WhatsApp webhook event: {json.dumps(payload)}")
+    return {"status": "received"}
 
 # ─── Startup ───
 
