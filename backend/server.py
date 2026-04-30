@@ -412,15 +412,7 @@ async def generate_ai_diagnosis(impact: dict, profile: dict | None) -> dict:
     try:
         from emergentintegrations.llm.chat import LlmChat, UserMessage
     except ImportError as exc:
-        logger.warning(f"emergentintegrations no disponible, usando diagnóstico local: {exc}")
-        return {
-            "severity_assessment": f"Impacto de {impact.get('g_force', 0):.1f}G clasificado como {impact.get('severity_label', 'N/A')}",
-            "possible_injuries": ["Estimación local: verificar lesiones cervicales, tórax y extremidades"],
-            "first_aid_steps": ["Llamar al 911", "No mover al paciente", "Controlar respiración y pulso"],
-            "emergency_recommendations": ["Esperar atención médica y compartir ubicación del accidente"],
-            "priority_level": impact.get("severity", "medio"),
-            "fallback_reason": "missing_emergentintegrations"
-        }
+        raise RuntimeError(f"Gemini integration unavailable: {exc}") from exc
 
     profile_info = ""
     if profile:

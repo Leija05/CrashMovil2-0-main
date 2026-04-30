@@ -5,6 +5,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
+import * as Location from 'expo-location';
 import { COLORS, RADIUS, SPACING, severityColor, severityLabel } from '../../src/theme';
 import { useAuth } from '../../src/context/AuthContext';
 import { useBluetooth } from '../../src/context/BluetoothContext';
@@ -130,6 +131,18 @@ export default function DashboardScreen() {
     }
     setSending(true);
     try {
+      let latitude: number | null = null;
+      let longitude: number | null = null;
+      try {
+        const { status } = await Location.requestForegroundPermissionsAsync();
+        if (status === 'granted') {
+          const pos = await Location.getCurrentPositionAsync({});
+          latitude = pos.coords.latitude;
+          longitude = pos.coords.longitude;
+        }
+      } catch (locErr) {
+        console.warn('No se pudo obtener ubicación actual', locErr);
+      }
       const impact = await impactsAPI.create(token, {
         acceleration_x: telemetry.acceleration_x,
         acceleration_y: telemetry.acceleration_y,
@@ -138,8 +151,8 @@ export default function DashboardScreen() {
         gyroscope_y: telemetry.gyroscope_y,
         gyroscope_z: telemetry.gyroscope_z,
         g_force: telemetry.g_force,
-        latitude: 19.4326,
-        longitude: -99.1332,
+        latitude,
+        longitude,
       });
       if (impact?.alerted_contacts?.length === 0 && telemetry.g_force >= 10) {
         Alert.alert('No tienes contactos agregados', 'No se pudo notificar a nadie porque no hay contactos de emergencia.');
