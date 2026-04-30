@@ -17,6 +17,7 @@ import uuid
 import httpx
 import hmac
 import hashlib
+import asyncio
 from datetime import datetime, timezone, timedelta
 from pydantic import BaseModel, Field
 from typing import List, Optional
@@ -409,11 +410,6 @@ async def receive_telemetry(body: TelemetryInput, user: dict = Depends(get_curre
 # ─── AI Diagnosis (Gemini 2.5 Flash) ───
 
 async def generate_ai_diagnosis(impact: dict, profile: dict | None) -> dict:
-    try:
-        from emergentintegrations.llm.chat import LlmChat, UserMessage
-    except ImportError as exc:
-        raise RuntimeError(f"Gemini integration unavailable: {exc}") from exc
-
     profile_info = ""
     if profile:
         profile_info = (
@@ -446,13 +442,37 @@ async def generate_ai_diagnosis(impact: dict, profile: dict | None) -> dict:
         f"Genera el diagnóstico de emergencia en JSON."
     )
 
-    chat = LlmChat(
-        api_key=EMERGENT_LLM_KEY,
-        session_id=f"diagnosis-{impact.get('id', uuid.uuid4())}",
-        system_message=system_msg
-    ).with_model("gemini", GEMINI_MODEL)
+    response = None
+    last_error = None
 
-    response = await chat.send_message(UserMessage(text=prompt))
+    # IA 1: emergentintegrations (Gemini provider)
+    try:
+        from emergentintegrations.llm.chat import LlmChat, UserMessage
+        chat = LlmChat(
+            api_key=EMERGENT_LLM_KEY,
+            session_id=f"diagnosis-{impact.get('id', uuid.uuid4())}",
+            system_message=system_msg
+        ).with_model("gemini", GEMINI_MODEL)
+        response = await chat.send_message(UserMessage(text=prompt))
+        logger.info("AI diagnosis generated with emergentintegrations/gemini")
+    except Exception as exc:
+        last_error = exc
+        logger.warning(f"Primary AI (emergentintegrations) failed: {exc}")
+
+    # IA 2: google-generativeai directo (fallback)
+    if not response:
+        try:
+            import google.generativeai as genai
+            genai.configure(api_key=EMERGENT_LLM_KEY)
+            model = genai.GenerativeModel(GEMINI_MODEL)
+            combined_prompt = f"{system_msg}\n\n{prompt}"
+            fallback_resp = await asyncio.to_thread(model.generate_content, combined_prompt)
+            response = (getattr(fallback_resp, "text", "") or "").strip()
+            logger.info("AI diagnosis generated with google-generativeai fallback")
+        except Exception as exc:
+            last_error = exc
+            logger.error(f"Fallback AI (google-generativeai) failed: {exc}")
+            raise RuntimeError(f"Both AI providers failed. Last error: {last_error}") from exc
 
     try:
         cleaned = response.strip()
