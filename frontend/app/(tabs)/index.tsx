@@ -27,21 +27,48 @@ export default function DashboardScreen() {
 
   const [refreshing, setRefreshing] = useState(false);
   const [peakG, setPeakG] = useState(0);
-  const lastDataRef = useRef<number>(0);
+  //const lastDataRef = useRef<number>(0);
+  const lastDataRef = useRef<number>(Date.now());
+
+  // --- AÑADE ESTA LÍNEA ---
+  const telemetryRef = useRef(telemetry); 
   const [staleData, setStaleData] = useState(false);
+
+ 
   const [countdown, setCountdown] = useState<number | null>(null);
   const [sending, setSending] = useState(false);
   const [alertResult, setAlertResult] = useState<any | null>(null);
   const [countdownSeconds, setCountdownSeconds] = useState(8);
   const [hasEmergencyContacts, setHasEmergencyContacts] = useState(true);
 
-  useEffect(() => {
-    if (telemetry) {
+  /*useEffect(() => {
+    /*if (telemetry) {
       lastDataRef.current = Date.now();
       setStaleData(false);
       if (telemetry.g_force > peakG) setPeakG(telemetry.g_force);
     }
-  }, [telemetry, peakG]);
+
+    if (telemetry.g_force > peakG) {
+      setPeakG(prev => (telemetry.g_force > prev ? telemetry.g_force : prev));
+    }
+  }, [telemetry]);*/
+
+useEffect(() => {
+    // 1. Evitamos el error "Cannot read property g_force of null"
+    if (!telemetry) return;
+
+    // 2. Guardamos el dato en la referencia (silencioso)
+    telemetryRef.current = telemetry;
+    
+    // 3. Avisamos que los datos están "vivos"
+    lastDataRef.current = Date.now();
+    if (staleData) setStaleData(false);
+
+    // 4. Actualizamos el pico solo si es necesario
+    if (telemetry.g_force > peakG) {
+      setPeakG(prev => (telemetry.g_force > prev ? telemetry.g_force : prev));
+    }
+  }, [telemetry]);
 
 
   useEffect(() => {
@@ -96,7 +123,8 @@ export default function DashboardScreen() {
   const gForce = telemetry?.g_force ?? 0;
   const sevColor = severityColor(gForce);
   const sevLabel = severityLabel(gForce);
-  const liveData = connected && !staleData && !!telemetry;
+  //const liveData = connected && !staleData && !!telemetry;
+  const liveData = connected && !!telemetry;
   const highImpact = liveData && gForce >= 10;
 
   useEffect(() => {
@@ -116,7 +144,7 @@ export default function DashboardScreen() {
     return () => clearTimeout(t);
   }, [countdown, triggerEmergencyFlow]);
 
-  const triggerEmergencyFlow = useCallback(async () => {
+  /*const triggerEmergencyFlow = useCallback(async () => {
     if (!token || !telemetry || sending) return;
     if (!hasEmergencyContacts) {
       Alert.alert(
@@ -163,7 +191,68 @@ export default function DashboardScreen() {
     } finally {
       setSending(false);
     }
-  }, [token, telemetry, sending, hasEmergencyContacts, router]);
+  }, [token, telemetry, sending, hasEmergencyContacts, router]);*/
+
+
+  const triggerEmergencyFlow = useCallback(async () => {
+  // Obtenemos los datos de la referencia, NO del estado directamente
+  const currentTelemetry = telemetryRef.current; 
+  
+  if (!token || !currentTelemetry || sending) return;
+
+  if (!hasEmergencyContacts) {
+    Alert.alert(
+      'No tienes contactos agregados',
+      'Antes de enviar alertas, registra al menos un contacto de emergencia.',
+      [
+        { text: 'Cancelar', style: 'cancel' },
+        { text: 'Ir a Contactos', onPress: () => router.push('/contacts') },
+      ]
+    );
+    return;
+  }
+
+  setSending(true);
+  try {
+    let latitude: number | null = null;
+    let longitude: number | null = null;
+    try {
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      if (status === 'granted') {
+        const pos = await Location.getCurrentPositionAsync({});
+        latitude = pos.coords.latitude;
+        longitude = pos.coords.longitude;
+      }
+    } catch (locErr) {
+      console.warn('No se pudo obtener ubicación actual', locErr);
+    }
+
+    const impact = await impactsAPI.create(token, {
+      acceleration_x: currentTelemetry.acceleration_x,
+      acceleration_y: currentTelemetry.acceleration_y,
+      acceleration_z: currentTelemetry.acceleration_z,
+      gyroscope_x: currentTelemetry.gyroscope_x,
+      gyroscope_y: currentTelemetry.gyroscope_y,
+      gyroscope_z: currentTelemetry.gyroscope_z,
+      g_force: currentTelemetry.g_force,
+      latitude,
+      longitude,
+    });
+
+    if (impact?.alerted_contacts?.length === 0 && currentTelemetry.g_force >= 10) {
+      Alert.alert('No tienes contactos agregados', 'No se pudo notificar a nadie.');
+    }
+    setAlertResult(impact);
+  } catch (e: any) {
+    Alert.alert('Error', e.message || 'No se pudo enviar la alerta');
+  } finally {
+    setSending(false);
+  }
+  // IMPORTANTE: Quitamos 'telemetry' de aquí para que la función sea estable
+}, [token, sending, hasEmergencyContacts, router]);
+
+
+
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
