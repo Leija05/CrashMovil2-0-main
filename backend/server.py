@@ -166,6 +166,14 @@ def classify_severity(g_force: float) -> str:
 def severity_label(sev: str) -> str:
     return {"low": "Bajo", "medium": "Medio", "high": "Alto", "critical": "Crítico"}.get(sev, sev)
 
+def normalize_phone_number(raw_phone: str) -> str:
+    if not raw_phone:
+        return raw_phone
+    digits = "".join(ch for ch in raw_phone if ch.isdigit())
+    if digits.startswith("00"):
+        digits = digits[2:]
+    return f"+{digits}" if digits else raw_phone.strip()
+
 # ─── Auth Routes ───
 
 @api_router.post("/auth/register")
@@ -280,11 +288,15 @@ async def get_contacts(user: dict = Depends(get_current_user)):
 
 @api_router.post("/contacts")
 async def add_contact(body: ContactInput, user: dict = Depends(get_current_user)):
+    normalized_phone = normalize_phone_number(body.phone.strip())
+    if len(normalized_phone.replace("+", "")) < 8:
+        raise HTTPException(status_code=400, detail="Número de teléfono inválido")
+
     contact_doc = {
         "id": str(uuid.uuid4()),
         "user_id": user["id"],
         "name": body.name.strip(),
-        "phone": body.phone.strip(),
+        "phone": normalized_phone,
         "relationship": body.relationship.strip() if body.relationship else "",
         "verified": True,
         "verified_at": datetime.now(timezone.utc).isoformat(),
@@ -653,9 +665,10 @@ async def send_emergency_alerts(user: dict, impact: dict, profile: dict | None, 
     ]
     for contact in contacts:
         try:
-            await send_whatsapp_message(contact["phone"], message, template_params=template_values)
-            logger.info(f"Alert sent to {contact['name']} ({contact['phone']})")
-            alerted_contacts.append({"id": contact.get("id"), "name": contact.get("name"), "phone": contact.get("phone")})
+            normalized_phone = normalize_phone_number(contact["phone"])
+            await send_whatsapp_message(normalized_phone, message, template_params=template_values)
+            logger.info(f"Alert sent to {contact['name']} ({normalized_phone})")
+            alerted_contacts.append({"id": contact.get("id"), "name": contact.get("name"), "phone": normalized_phone})
         except Exception as e:
             logger.error(f"Failed to alert {contact['name']}: {e}")
     return alerted_contacts
