@@ -343,6 +343,15 @@ async def create_impact(body: ImpactInput, user: dict = Depends(get_current_user
 
     # Send alerts if above threshold
     if body.g_force >= threshold:
+        contact_count = await db.emergency_contacts.count_documents({"user_id": user["id"], "verified": True})
+        if contact_count == 0:
+            msg = "No tienes contactos de emergencia verificados"
+            logger.warning(msg)
+            await db.impact_events.update_one({"id": impact_id}, {"$set": {"alerts_sent": False, "alert_error": msg}})
+            impact_doc["alerts_sent"] = False
+            impact_doc["alert_error"] = msg
+            impact_doc.pop("_id", None)
+            return impact_doc
         try:
             alerted_contacts = await send_emergency_alerts(user, impact_doc, profile, diagnosis)
             await db.impact_events.update_one({"id": impact_id}, {"$set": {"alerts_sent": True, "alerted_contacts": alerted_contacts}})
