@@ -29,8 +29,8 @@ DB_NAME = os.environ["DB_NAME"]
 JWT_SECRET = os.environ["JWT_SECRET"]
 JWT_ALGORITHM = os.environ.get("JWT_ALGORITHM")
 JWT_EXPIRE_MINUTES = int(os.environ.get("JWT_EXPIRE_MINUTES"))
-EMERGENT_LLM_KEY = os.environ.get("EMERGENT_LLM_KEY") or os.environ.get("GOOGLE_API_KEY", "")
-GEMINI_MODEL = os.environ.get("GEMINI_MODEL") or os.environ.get("GEMINI_API_KEY") or "gemini-2.5-flash"
+GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY", "")
+GEMINI_MODEL = os.environ.get("GEMINI_MODEL") or "gemini-2.5-flash"
 WHATSAPP_ACCESS_TOKEN = os.environ.get("WHATSAPP_ACCESS_TOKEN", "")
 WHATSAPP_PHONE_NUMBER_ID = os.environ.get("WHATSAPP_PHONE_NUMBER_ID", "")
 WHATSAPP_API_VERSION = os.environ.get("WHATSAPP_API_VERSION", "v20.0")
@@ -39,7 +39,6 @@ WHATSAPP_APP_SECRET = os.environ.get("WHATSAPP_APP_SECRET", "")
 WHATSAPP_COLLISION_TEMPLATE_NAME = os.environ.get("WHATSAPP_COLLISION_TEMPLATE_NAME", "")
 WHATSAPP_TEMPLATE_LANGUAGE = os.environ.get("WHATSAPP_TEMPLATE_LANGUAGE", "es_MX")
 WHATSAPP_TEMPLATE_FALLBACK_ON_24H = os.environ.get("WHATSAPP_TEMPLATE_FALLBACK_ON_24H", "true").lower() == "true"
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
 COHERE_API_KEY = os.environ.get("COHERE_API_KEY", "")
 
@@ -446,37 +445,81 @@ async def generate_ai_diagnosis(impact: dict, profile: dict | None) -> dict:
         f"Genera el diagnóstico de emergencia en JSON."
     )
 
+    combined_prompt = f"{system_msg}\n\n{prompt}"
     response = None
     last_error = None
 
-    # IA 1: emergentintegrations (Gemini provider)
-    try:
-        from emergentintegrations.llm.chat import LlmChat, UserMessage
-        chat = LlmChat(
-            api_key=EMERGENT_LLM_KEY,
-            session_id=f"diagnosis-{impact.get('id', uuid.uuid4())}",
-            system_message=system_msg
-        ).with_model("gemini", GEMINI_MODEL)
-        response = await chat.send_message(UserMessage(text=prompt))
-        logger.info("AI diagnosis generated with emergentintegrations/gemini")
-    except Exception as exc:
-        last_error = exc
-        logger.warning(f"Primary AI (emergentintegrations) failed: {exc}")
-
-    # IA 2: google-generativeai directo (fallback)
-    if not response:
+    # Probar 3 IAs en cadena: Gemini -> Groq -> Cohere
+    for provider in ["gemini", "groq", "cohere"]:
         try:
-            from google import genai
-            genai.configure(api_key=EMERGENT_LLM_KEY)
-            model = genai.GenerativeModel(GEMINI_MODEL)
-            combined_prompt = f"{system_msg}\n\n{prompt}"
-            fallback_resp = await asyncio.to_thread(model.generate_content, combined_prompt)
-            response = (getattr(fallback_resp, "text", "") or "").strip()
-            logger.info("AI diagnosis generated with google-generativeai fallback")
+            if provider == "gemini":
+                if not GOOGLE_API_KEY:
+                    raise RuntimeError("GOOGLE_API_KEY no configurada")
+                from google import genai
+                client = genai.Client(api_key=GOOGLE_API_KEY)
+                gemini_resp = await asyncio.to_thread(
+                    client.models.generate_content,
+                    model=GEMINI_MODEL,
+                    contents=combined_prompt
+                )
+                response = (getattr(gemini_resp, "text", "") or "").strip()
+
+            elif provider == "groq":
+                if not GROQ_API_KEY:
+                    raise RuntimeError("GROQ_API_KEY no configurada")
+                async with httpx.AsyncClient(timeout=30.0) as http_client:
+                    groq_resp = await http_client.post(
+                        "https://api.groq.com/openai/v1/chat/completions",
+                        headers={
+                            "Authorization": f"Bearer {GROQ_API_KEY}",
+                            "Content-Type": "application/json",
+                        },
+                        json={
+                            "model": "llama-3.1-8b-instant",
+                            "temperature": 0.2,
+                            "messages": [
+                                {"role": "system", "content": system_msg},
+                                {"role": "user", "content": prompt},
+                            ],
+                        },
+                    )
+                    groq_resp.raise_for_status()
+                    data = groq_resp.json()
+                    response = (((data.get("choices") or [{}])[0].get("message") or {}).get("content") or "").strip()
+
+            else:
+                if not COHERE_API_KEY:
+                    raise RuntimeError("COHERE_API_KEY no configurada")
+                async with httpx.AsyncClient(timeout=30.0) as http_client:
+                    cohere_resp = await http_client.post(
+                        "https://api.cohere.com/v2/chat",
+                        headers={
+                            "Authorization": f"Bearer {COHERE_API_KEY}",
+                            "Content-Type": "application/json",
+                        },
+                        json={
+                            "model": "command-r-plus",
+                            "temperature": 0.2,
+                            "messages": [
+                                {"role": "system", "content": system_msg},
+                                {"role": "user", "content": prompt},
+                            ],
+                        },
+                    )
+                    cohere_resp.raise_for_status()
+                    data = cohere_resp.json()
+                    message_content = (data.get("message") or {}).get("content") or []
+                    response = (message_content[0].get("text", "") if message_content else "").strip()
+
+            if response:
+                logger.info(f"AI diagnosis generated with {provider}")
+                break
         except Exception as exc:
             last_error = exc
-            logger.error(f"Fallback AI (google-generativeai) failed: {exc}")
-            raise RuntimeError(f"Both AI providers failed. Last error: {last_error}") from exc
+            logger.warning(f"AI provider {provider} failed: {exc}")
+
+    if not response:
+        raise RuntimeError(f"All AI providers failed. Last error: {last_error}")
 
     try:
         cleaned = response.strip()
@@ -557,6 +600,23 @@ async def send_whatsapp_message(phone: str, message: str, template_params: Optio
             raise HTTPException(status_code=resp.status_code, detail=f"WhatsApp API error: {resp.text}")
         return resp.json()
 
+def build_diagnosis_summary(diagnosis: dict | None) -> str:
+    if not diagnosis:
+        return "Sin diagnóstico IA disponible."
+
+    severity = diagnosis.get("severity_assessment", "N/A")
+    priority = diagnosis.get("priority_level", "N/A")
+    injuries = diagnosis.get("possible_injuries") or []
+    recommendation = (diagnosis.get("emergency_recommendations") or ["Contactar servicios de emergencia"])[0]
+    injuries_text = ", ".join(injuries[:2]) if injuries else "No especificadas"
+
+    return (
+        f"Severidad: {severity}. "
+        f"Prioridad: {priority}. "
+        f"Lesiones posibles: {injuries_text}. "
+        f"Acción recomendada: {recommendation}."
+    )
+
 async def send_emergency_alerts(user: dict, impact: dict, profile: dict | None, diagnosis: dict | None):
     contacts = await db.emergency_contacts.find(
         {"user_id": user["id"], "verified": True}
@@ -572,13 +632,8 @@ async def send_emergency_alerts(user: dict, impact: dict, profile: dict | None, 
         lon = impact["location"]["longitude"]
         location_str = f"📍 Ubicación: https://maps.google.com/?q={lat},{lon}\n"
 
-    diagnosis_str = ""
-    if diagnosis:
-        diagnosis_str = (
-            f"🏥 Diagnóstico IA:\n"
-            f"Severidad: {diagnosis.get('severity_assessment', 'N/A')}\n"
-            f"Prioridad: {diagnosis.get('priority_level', 'N/A')}\n"
-        )
+    diagnosis_summary = build_diagnosis_summary(diagnosis)
+    diagnosis_str = f"🏥 Diagnóstico IA (resumen):\n{diagnosis_summary}\n"
 
     message = (
         f"🚨 ALERTA DE EMERGENCIA C.R.A.S.H. 🚨\n\n"
@@ -592,7 +647,7 @@ async def send_emergency_alerts(user: dict, impact: dict, profile: dict | None, 
     alerted_contacts = []
     template_values = [
         impact.get("severity_label", "N/A"),
-        diagnosis.get("severity_assessment", "Sin diagnóstico IA") if diagnosis else "Sin diagnóstico IA",
+        diagnosis_summary,
         (diagnosis.get("emergency_recommendations") or ["Contactar servicios de emergencia"])[0] if diagnosis else "Contactar servicios de emergencia",
         f"https://maps.google.com/?q={impact['location']['latitude']},{impact['location']['longitude']}" if impact.get("location") and impact["location"].get("latitude") else "Ubicación no disponible"
     ]
