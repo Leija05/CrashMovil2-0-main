@@ -166,6 +166,15 @@ def classify_severity(g_force: float) -> str:
 def severity_label(sev: str) -> str:
     return {"low": "Bajo", "medium": "Medio", "high": "Alto", "critical": "Crítico"}.get(sev, sev)
 
+
+def has_valid_coordinates(location: dict | None) -> bool:
+    if not location:
+        return False
+    lat = location.get("latitude")
+    lon = location.get("longitude")
+    return lat is not None and lon is not None
+
+
 # ─── Auth Routes ───
 
 @api_router.post("/auth/register")
@@ -329,7 +338,7 @@ async def create_impact(body: ImpactInput, user: dict = Depends(get_current_user
         "g_force": body.g_force,
         "severity": severity,
         "severity_label": severity_label(severity),
-        "location": {"latitude": body.latitude, "longitude": body.longitude} if body.latitude else None,
+        "location": {"latitude": body.latitude, "longitude": body.longitude} if body.latitude is not None and body.longitude is not None else None,
         "ai_diagnosis": None,
         "alerts_sent": False,
         "created_at": datetime.now(timezone.utc).isoformat()
@@ -353,8 +362,11 @@ async def create_impact(body: ImpactInput, user: dict = Depends(get_current_user
     except Exception as e:
         logger.error(f"AI diagnosis failed: {e}")
 
-    # Send alerts if above threshold
-    if body.g_force >= threshold:
+    # Send alerts only if feature is enabled and above threshold
+    auto_whatsapp_enabled = settings.get("auto_whatsapp", True) if settings else True
+    if not auto_whatsapp_enabled:
+        logger.info("auto_whatsapp disabled for user %s", user["id"])
+    elif body.g_force >= threshold:
         contact_count = await db.emergency_contacts.count_documents({"user_id": user["id"], "verified": True})
         if contact_count == 0:
             msg = "No tienes contactos de emergencia verificados"
@@ -370,7 +382,11 @@ async def create_impact(body: ImpactInput, user: dict = Depends(get_current_user
             impact_doc["alerts_sent"] = True
             impact_doc["alerted_contacts"] = alerted_contacts
         except Exception as e:
-            logger.error(f"Alert sending failed: {e}")
+            err_msg = f"No se pudieron enviar alertas por WhatsApp: {e}"
+            logger.error(err_msg)
+            await db.impact_events.update_one({"id": impact_id}, {"$set": {"alerts_sent": False, "alert_error": err_msg}})
+            impact_doc["alerts_sent"] = False
+            impact_doc["alert_error"] = err_msg
 
     impact_doc.pop("_id", None)
     return impact_doc
@@ -627,7 +643,7 @@ async def send_emergency_alerts(user: dict, impact: dict, profile: dict | None, 
         return []
 
     location_str = ""
-    if impact.get("location") and impact["location"].get("latitude"):
+    if has_valid_coordinates(impact.get("location")):
         lat = impact["location"]["latitude"]
         lon = impact["location"]["longitude"]
         location_str = f"📍 Ubicación: https://maps.google.com/?q={lat},{lon}\n"
@@ -649,7 +665,7 @@ async def send_emergency_alerts(user: dict, impact: dict, profile: dict | None, 
         impact.get("severity_label", "N/A"),
         diagnosis_summary,
         (diagnosis.get("emergency_recommendations") or ["Contactar servicios de emergencia"])[0] if diagnosis else "Contactar servicios de emergencia",
-        f"https://maps.google.com/?q={impact['location']['latitude']},{impact['location']['longitude']}" if impact.get("location") and impact["location"].get("latitude") else "Ubicación no disponible"
+        f"https://maps.google.com/?q={impact['location']['latitude']},{impact['location']['longitude']}" if has_valid_coordinates(impact.get("location")) else "Ubicación no disponible"
     ]
     for contact in contacts:
         try:
