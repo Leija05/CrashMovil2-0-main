@@ -97,6 +97,7 @@ class ThresholdInput(BaseModel):
     alert_threshold: float = 5.0
     auto_call: Optional[bool] = True
     auto_whatsapp: Optional[bool] = True
+    countdown_seconds: Optional[int] = 8
 
 class TelemetryInput(BaseModel):
     acceleration_x: float
@@ -200,6 +201,7 @@ async def register(body: RegisterInput):
         "alert_threshold": 5.0,
         "auto_call": True,
         "auto_whatsapp": True,
+        "countdown_seconds": 8,
         "created_at": datetime.now(timezone.utc).isoformat()
     })
     access = create_access_token(user_id, email)
@@ -354,7 +356,8 @@ async def create_impact(body: ImpactInput, user: dict = Depends(get_current_user
         logger.error(f"AI diagnosis failed: {e}")
 
     # Send alerts if above threshold
-    if body.g_force >= threshold:
+    auto_whatsapp_enabled = settings.get("auto_whatsapp", True) if settings else True
+    if body.g_force >= threshold and auto_whatsapp_enabled:
         contact_count = await db.emergency_contacts.count_documents({"user_id": user["id"], "verified": True})
         if contact_count == 0:
             msg = "No tienes contactos de emergencia verificados"
@@ -381,7 +384,7 @@ async def create_impact(body: ImpactInput, user: dict = Depends(get_current_user
 async def get_settings(user: dict = Depends(get_current_user)):
     settings = await db.user_settings.find_one({"user_id": user["id"]}, {"_id": 0})
     if not settings:
-        settings = {"user_id": user["id"], "alert_threshold": 5.0, "auto_call": True, "auto_whatsapp": True}
+        settings = {"user_id": user["id"], "alert_threshold": 5.0, "auto_call": True, "auto_whatsapp": True, "countdown_seconds": 8}
     return settings
 
 @api_router.put("/settings")
@@ -542,6 +545,12 @@ async def generate_ai_diagnosis(impact: dict, profile: dict | None) -> dict:
 # ─── WhatsApp Service ───
 
 async def send_whatsapp_message(phone: str, message: str, template_params: Optional[List[str]] = None):
+    normalized_phone = "".join(ch for ch in phone if ch.isdigit())
+    if phone.strip().startswith("+"):
+        normalized_phone = f"+{normalized_phone}"
+    if not normalized_phone:
+        raise HTTPException(status_code=400, detail="Número de teléfono inválido para WhatsApp")
+
     url = f"https://graph.facebook.com/{WHATSAPP_API_VERSION}/{WHATSAPP_PHONE_NUMBER_ID}/messages"
     headers = {
         "Authorization": f"Bearer {WHATSAPP_ACCESS_TOKEN}",
@@ -549,7 +558,7 @@ async def send_whatsapp_message(phone: str, message: str, template_params: Optio
     }
     payload = {
         "messaging_product": "whatsapp",
-        "to": phone,
+        "to": normalized_phone,
         "type": "text",
         "text": {"body": message}
     }
@@ -563,7 +572,7 @@ async def send_whatsapp_message(phone: str, message: str, template_params: Optio
             }]
         payload = {
             "messaging_product": "whatsapp",
-            "to": phone,
+            "to": normalized_phone,
             "type": "template",
             "template": {
                 "name": WHATSAPP_COLLISION_TEMPLATE_NAME,
@@ -588,7 +597,7 @@ async def send_whatsapp_message(phone: str, message: str, template_params: Optio
         if resp.status_code >= 400 and using_template and WHATSAPP_TEMPLATE_FALLBACK_ON_24H and error_code not in (131047,):
             fallback_payload = {
                 "messaging_product": "whatsapp",
-                "to": phone,
+                "to": normalized_phone,
                 "type": "text",
                 "text": {"body": message}
             }
