@@ -41,6 +41,7 @@ export default function DashboardScreen() {
   const [countdownSeconds, setCountdownSeconds] = useState(8);
   const [alertThreshold, setAlertThreshold] = useState(5);
   const [hasEmergencyContacts, setHasEmergencyContacts] = useState(true);
+  const [pendingImpactTelemetry, setPendingImpactTelemetry] = useState<any | null>(null);
 
   /*useEffect(() => {
     /*if (telemetry) {
@@ -128,6 +129,7 @@ useEffect(() => {
 
   useEffect(() => {
     if (highImpact && countdown === null && !sending) {
+      setPendingImpactTelemetry(telemetryRef.current);
       setCountdown(countdownSeconds);
     }
   }, [highImpact, countdown, sending, countdownSeconds]);
@@ -194,8 +196,9 @@ useEffect(() => {
 
 
   const triggerEmergencyFlow = useCallback(async () => {
-  // Obtenemos los datos de la referencia, NO del estado directamente
-  const currentTelemetry = telemetryRef.current; 
+  // Usar primero la telemetría capturada al superar el umbral.
+  // Si no existe, caer de forma segura al último dato disponible.
+  const currentTelemetry = pendingImpactTelemetry || telemetryRef.current; 
   
   if (!token || !currentTelemetry || sending) return;
 
@@ -246,9 +249,10 @@ useEffect(() => {
     Alert.alert('Error', e.message || 'No se pudo enviar la alerta');
   } finally {
     setSending(false);
+    setPendingImpactTelemetry(null);
   }
   // IMPORTANTE: Quitamos 'telemetry' de aquí para que la función sea estable
-}, [token, sending, hasEmergencyContacts, router, alertThreshold]);
+}, [token, sending, hasEmergencyContacts, router, alertThreshold, pendingImpactTelemetry]);
 
 
 
@@ -385,7 +389,7 @@ useEffect(() => {
             <Text style={styles.countdownLabel}>Tiempo restante</Text>
             <Text style={styles.countdownValue}>{countdown}s</Text>
             <View style={styles.dialogActions}>
-              <TouchableOpacity style={styles.cancelBtnSoft} onPress={() => setCountdown(null)}>
+              <TouchableOpacity style={styles.cancelBtnSoft} onPress={() => { setCountdown(null); setPendingImpactTelemetry(null); }}>
                 <Text style={styles.cancelSoftText}>Cancelar</Text>
               </TouchableOpacity>
               <TouchableOpacity style={styles.cancelBtn} onPress={() => { setCountdown(null); triggerEmergencyFlow(); }}>
