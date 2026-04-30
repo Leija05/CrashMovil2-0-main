@@ -363,6 +363,33 @@ async def create_impact(body: ImpactInput, user: dict = Depends(get_current_user
         impact_doc.pop("_id", None)
         return impact_doc
 
+    # Deduplicate fast-repeated impacts so a single collision only triggers one WhatsApp blast.
+    dedupe_since = (datetime.now(timezone.utc) - timedelta(seconds=20)).isoformat()
+    recent_alerted_impacts = await db.impact_events.find(
+        {
+            "user_id": user["id"],
+            "alerts_sent": True,
+            "created_at": {"$gte": dedupe_since},
+        },
+        {"_id": 0, "id": 1, "g_force": 1, "created_at": 1},
+    ).to_list(10)
+    for recent in recent_alerted_impacts:
+        try:
+            if abs(float(recent.get("g_force", 0)) - float(body.g_force)) <= 0.6:
+                msg = "Alerta duplicada suprimida: ya se notificó un impacto equivalente en los últimos 20 segundos."
+                logger.info(msg)
+                await db.impact_events.update_one(
+                    {"id": impact_id},
+                    {"$set": {"alerts_sent": False, "alerted_contacts": [], "alert_error": msg}},
+                )
+                impact_doc["alerts_sent"] = False
+                impact_doc["alerted_contacts"] = []
+                impact_doc["alert_error"] = msg
+                impact_doc.pop("_id", None)
+                return impact_doc
+        except Exception:
+            continue
+
     try:
         alerted_contacts = await send_emergency_alerts(user, impact_doc, profile, diagnosis)
         if alerted_contacts:
