@@ -22,11 +22,9 @@ export default function ContactsScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [showAdd, setShowAdd] = useState(false);
-  const [showVerify, setShowVerify] = useState<string | null>(null);
   const [name, setName] = useState('');
   const [phone, setPhone] = useState('');
   const [relationship, setRelationship] = useState('');
-  const [verifyToken, setVerifyToken] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
   const fetchContacts = useCallback(async () => {
@@ -47,19 +45,6 @@ export default function ContactsScreen() {
       await contactsAPI.add(token, { name: name.trim(), phone: phone.trim(), relationship: relationship.trim() });
       setName(''); setPhone(''); setRelationship('');
       setShowAdd(false);
-      await fetchContacts();
-    } catch (e: any) {
-      Alert.alert('Error', e.message);
-    } finally { setSubmitting(false); }
-  };
-
-  const verifyContact = async (contactId: string) => {
-    if (!token || !verifyToken.trim()) return;
-    setSubmitting(true);
-    try {
-      await contactsAPI.verify(token, contactId, verifyToken.trim());
-      setVerifyToken('');
-      setShowVerify(null);
       await fetchContacts();
     } catch (e: any) {
       Alert.alert('Error', e.message);
@@ -88,20 +73,10 @@ export default function ContactsScreen() {
           {item.relationship ? <Text style={styles.cardRel}>{item.relationship}</Text> : null}
         </View>
         <View style={styles.cardActions}>
-          {item.verified ? (
-            <View style={styles.verifiedBadge}>
-              <Ionicons name="checkmark-circle" size={14} color={COLORS.success} />
-              <Text style={styles.verifiedText}>VERIFICADO</Text>
-            </View>
-          ) : (
-            <TouchableOpacity
-              testID={`verify-contact-${item.id}-btn`}
-              style={styles.verifyBtn}
-              onPress={() => setShowVerify(item.id)}
-            >
-              <Text style={styles.verifyBtnText}>VERIFICAR</Text>
-            </TouchableOpacity>
-          )}
+          <View style={styles.verifiedBadge}>
+            <Ionicons name="checkmark-circle" size={14} color={COLORS.success} />
+            <Text style={styles.verifiedText}>ACTIVO</Text>
+          </View>
           <TouchableOpacity
             testID={`delete-contact-${item.id}-btn`}
             onPress={() => deleteContact(item.id)}
@@ -111,12 +86,6 @@ export default function ContactsScreen() {
           </TouchableOpacity>
         </View>
       </View>
-      {!item.verified && (
-        <View style={styles.tokenRow}>
-          <Ionicons name="key-outline" size={12} color={COLORS.warning} />
-          <Text style={styles.tokenText}>Token: {item.verification_token}</Text>
-        </View>
-      )}
     </View>
   );
 
@@ -125,7 +94,7 @@ export default function ContactsScreen() {
       <View style={styles.headerSection}>
         <View>
           <Text style={styles.title}>CONTACTOS DE EMERGENCIA</Text>
-          <Text style={styles.subtitle}>{contacts.filter(c => c.verified).length} verificados de {contacts.length}</Text>
+          <Text style={styles.subtitle}>{contacts.length} contactos activos</Text>
         </View>
         <TouchableOpacity testID="add-contact-btn" style={styles.addBtn} onPress={() => setShowAdd(true)}>
           <Ionicons name="add" size={24} color="#0A0A0A" />
@@ -180,28 +149,7 @@ export default function ContactsScreen() {
         </KeyboardAvoidingView>
       </Modal>
 
-      {/* Verify Token Modal */}
-      <Modal visible={!!showVerify} animationType="slide" transparent>
-        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
-            <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Verificar Contacto</Text>
-              <TouchableOpacity onPress={() => setShowVerify(null)} testID="close-verify-modal-btn">
-                <Ionicons name="close" size={24} color={COLORS.text} />
-              </TouchableOpacity>
-            </View>
-            <Text style={styles.verifyInfo}>Ingresa el token de 8 caracteres enviado por WhatsApp al contacto.</Text>
-            <View style={styles.inputGroup}>
-              <Text style={styles.label}>TOKEN DE VERIFICACIÓN</Text>
-              <TextInput testID="verify-token-input" style={[styles.input, styles.tokenInput]} value={verifyToken} onChangeText={setVerifyToken} placeholder="XXXXXXXX" placeholderTextColor="#666" autoCapitalize="characters" maxLength={8} />
-            </View>
-            <TouchableOpacity testID="submit-verify-btn" style={[styles.submitBtn, submitting && { opacity: 0.6 }]} onPress={() => showVerify && verifyContact(showVerify)} disabled={submitting}>
-              {submitting ? <ActivityIndicator color="#FFF" /> : <Text style={styles.submitText}>VERIFICAR</Text>}
-            </TouchableOpacity>
-          </View>
-        </KeyboardAvoidingView>
-      </Modal>
-    </SafeAreaView>
+      </SafeAreaView>
   );
 }
 
@@ -222,11 +170,7 @@ const styles = StyleSheet.create({
   cardActions: { alignItems: 'flex-end', gap: 6 },
   verifiedBadge: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   verifiedText: { fontSize: 9, fontWeight: '800', color: COLORS.success, letterSpacing: 1 },
-  verifyBtn: { backgroundColor: 'rgba(204,255,0,0.15)', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 8 },
-  verifyBtnText: { fontSize: 10, fontWeight: '800', color: COLORS.accent, letterSpacing: 1 },
   deleteBtn: { padding: 4 },
-  tokenRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 10, paddingTop: 10, borderTopWidth: 1, borderTopColor: COLORS.border },
-  tokenText: { fontSize: 11, color: COLORS.warning, fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace' },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   empty: { alignItems: 'center', paddingTop: 60 },
   emptyText: { fontSize: 16, color: '#666', marginTop: 16, fontWeight: '600' },
@@ -238,8 +182,6 @@ const styles = StyleSheet.create({
   inputGroup: { marginBottom: 16 },
   label: { fontSize: 10, fontWeight: '700', color: COLORS.textSec, letterSpacing: 2, marginBottom: 6 },
   input: { backgroundColor: COLORS.bg, borderRadius: 12, paddingHorizontal: 14, height: 48, color: COLORS.text, fontSize: 15, borderWidth: 1, borderColor: COLORS.border },
-  tokenInput: { textAlign: 'center', fontSize: 20, fontWeight: '800', letterSpacing: 4 },
-  verifyInfo: { fontSize: 13, color: COLORS.textSec, marginBottom: 16, lineHeight: 18 },
   submitBtn: { backgroundColor: COLORS.primary, borderRadius: 25, height: 52, alignItems: 'center', justifyContent: 'center', marginTop: 8 },
   submitText: { color: '#FFF', fontSize: 14, fontWeight: '800', letterSpacing: 2 },
 });
