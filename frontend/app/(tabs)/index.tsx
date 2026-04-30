@@ -19,7 +19,7 @@ export default function DashboardScreen() {
   const { user } = useAuth();
   const { token } = useAuth();
   const router = useRouter();
-  const { deviceName: pattern } = useAppSettings();
+  const { deviceName: pattern, alertsConfigVersion } = useAppSettings();
   const {
     connected, telemetry, statusDetail, deviceName,
     disconnect, nativeAvailable,
@@ -67,7 +67,7 @@ useEffect(() => {
       }
     };
     loadSettings();
-  }, [token]);
+  }, [token, alertsConfigVersion]);
 
   useEffect(() => {
     const loadContactsState = async () => {
