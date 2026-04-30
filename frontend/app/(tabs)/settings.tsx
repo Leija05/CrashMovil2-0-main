@@ -15,7 +15,7 @@ import { settingsAPI } from '../../src/services/api';
 export default function SettingsScreen() {
   const router = useRouter();
   const { token, logout } = useAuth();
-  const { developerMode, setDeveloperMode, deviceName, setDeviceName } = useAppSettings();
+  const { deviceName, setDeviceName } = useAppSettings();
   const { connected, deviceName: liveDevice, disconnect, nativeAvailable } = useBluetooth();
 
   const [threshold, setThreshold] = useState('5');
@@ -68,12 +68,6 @@ export default function SettingsScreen() {
     Alert.alert('Guardado', 'Nombre del dispositivo actualizado.');
   };
 
-  const handleToggleDev = async (value: boolean) => {
-    if (!value && connected && liveDevice === 'SIMULADOR CRASH') {
-      // Will stop the simulation automatically via context
-    }
-    await setDeveloperMode(value);
-  };
 
   const confirmLogout = () => {
     Alert.alert(
@@ -153,9 +147,9 @@ export default function SettingsScreen() {
             </View>
           </View>
 
-          {/* ─── Developer Mode ─── */}
+          {/* ─── Emergencia ─── */}
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>MODO DE OPERACIÓN</Text>
+            <Text style={styles.sectionTitle}>TIEMPO DE CONFIRMACIÓN</Text>
 
             <View style={styles.inputGroup}>
               <Text style={styles.label}>CUENTA REGRESIVA DE EMERGENCIA</Text>
@@ -170,31 +164,11 @@ export default function SettingsScreen() {
                 <Text style={styles.gSymbol}>s</Text>
               </View>
             </View>
-            <View style={styles.toggleRow}>
-              <View style={{ flex: 1 }}>
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                  <Ionicons name="construct" size={18} color={developerMode ? COLORS.warning : COLORS.textSec} />
-                  <Text style={styles.toggleTitle}>Modo desarrollador (test)</Text>
-                </View>
-                <Text style={styles.toggleHelper}>
-                  {developerMode
-                    ? 'Activo: la app simula el giroscópio. Útil para desarrollo y pruebas.'
-                    : 'Inactivo: los datos se leen 100% desde tu módulo Bluetooth HC-05/HC-10.'}
-                </Text>
-              </View>
-              <Switch
-                testID="dev-mode-switch"
-                value={developerMode}
-                onValueChange={handleToggleDev}
-                trackColor={{ false: '#2A2A34', true: 'rgba(251,191,36,0.5)' }}
-                thumbColor={developerMode ? COLORS.warning : '#9A9AA8'}
-              />
-            </View>
-            {!nativeAvailable && !developerMode && (
+            {!nativeAvailable && (
               <View style={styles.warnBox}>
                 <Ionicons name="information-circle" size={14} color={COLORS.info} />
                 <Text style={styles.warnBoxText}>
-                  Bluetooth real requiere build nativa (expo-dev-client). Activa el modo desarrollador para probar la app sin hardware.
+                  Bluetooth real requiere build nativa (expo-dev-client).
                 </Text>
               </View>
             )}

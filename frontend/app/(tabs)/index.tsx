@@ -19,10 +19,10 @@ export default function DashboardScreen() {
   const { user } = useAuth();
   const { token } = useAuth();
   const router = useRouter();
-  const { developerMode, deviceName: pattern } = useAppSettings();
+  const { deviceName: pattern } = useAppSettings();
   const {
     connected, telemetry, statusDetail, deviceName,
-    startSimulation, stopSimulation, disconnect, nativeAvailable,
+    disconnect, nativeAvailable,
   } = useBluetooth();
 
   const [refreshing, setRefreshing] = useState(false);
@@ -39,6 +39,7 @@ export default function DashboardScreen() {
   const [sending, setSending] = useState(false);
   const [alertResult, setAlertResult] = useState<any | null>(null);
   const [countdownSeconds, setCountdownSeconds] = useState(8);
+  const [alertThreshold, setAlertThreshold] = useState(5);
   const [hasEmergencyContacts, setHasEmergencyContacts] = useState(true);
 
   /*useEffect(() => {
@@ -80,6 +81,8 @@ useEffect(() => {
         if (!Number.isNaN(fromServer) && fromServer >= 3 && fromServer <= 60) {
           setCountdownSeconds(Math.round(fromServer));
         }
+        const threshold = Number(s?.alert_threshold ?? 5);
+        if (!Number.isNaN(threshold) && threshold > 0) setAlertThreshold(threshold);
       } catch (e) {
         console.warn('No se pudo cargar countdown de usuario', e);
       }
@@ -115,17 +118,13 @@ useEffect(() => {
     setTimeout(() => setRefreshing(false), 400);
   }, []);
 
-  const handleDevStart = () => {
-    if (connected) stopSimulation();
-    else startSimulation();
-  };
 
   const gForce = telemetry?.g_force ?? 0;
   const sevColor = severityColor(gForce);
   const sevLabel = severityLabel(gForce);
   //const liveData = connected && !staleData && !!telemetry;
   const liveData = connected && !!telemetry;
-  const highImpact = liveData && gForce >= 10;
+  const highImpact = liveData && gForce >= alertThreshold;
 
   useEffect(() => {
     if (highImpact && countdown === null && !sending) {
@@ -239,7 +238,7 @@ useEffect(() => {
       longitude,
     });
 
-    if (impact?.alerted_contacts?.length === 0 && currentTelemetry.g_force >= 10) {
+    if (impact?.alerted_contacts?.length === 0 && currentTelemetry.g_force >= alertThreshold) {
       Alert.alert('No tienes contactos agregados', 'No se pudo notificar a nadie.');
     }
     setAlertResult(impact);
@@ -249,7 +248,7 @@ useEffect(() => {
     setSending(false);
   }
   // IMPORTANTE: Quitamos 'telemetry' de aquí para que la función sea estable
-}, [token, sending, hasEmergencyContacts, router]);
+}, [token, sending, hasEmergencyContacts, router, alertThreshold]);
 
 
 
@@ -265,40 +264,36 @@ useEffect(() => {
             <Text style={styles.greeting}>Hola, {user?.name?.split(' ')[0] || 'Rider'}</Text>
             <Text style={styles.appName}>C.R.A.S.H.</Text>
           </View>
-          <View style={[styles.modePill, developerMode && styles.modePillDev]}>
+          <View style={styles.modePill}>
             <Ionicons
-              name={developerMode ? 'construct' : 'shield-checkmark'}
+              name={'shield-checkmark'}
               size={12}
-              color={developerMode ? COLORS.warning : COLORS.success}
+              color={COLORS.success}
             />
-            <Text style={[styles.modeText, { color: developerMode ? COLORS.warning : COLORS.success }]}>
-              {developerMode ? 'DEV' : 'REAL'}
+            <Text style={[styles.modeText, { color: COLORS.success }]}>
+              REAL
             </Text>
           </View>
         </View>
 
         <TouchableOpacity
           style={[styles.statusBar, liveData && styles.statusBarConnected]}
-          onPress={() => !developerMode && router.push('/devices')}
-          activeOpacity={developerMode ? 1 : 0.7}
+          onPress={() => router.push('/devices')}
+          activeOpacity={0.7}
           testID="dashboard-status-bar"
         >
           <View style={[styles.statusDot, { backgroundColor: liveData ? COLORS.success : connected ? COLORS.warning : COLORS.textDim }]} />
           <View style={{ flex: 1 }}>
             <Text style={styles.statusLabel}>
-              {liveData ? 'CONECTADO' : connected ? 'SIN DATOS' : developerMode ? 'MODO SIMULACIÓN' : 'DESCONECTADO'}
+              {liveData ? 'CONECTADO' : connected ? 'SIN DATOS' : 'DESCONECTADO'}
             </Text>
             <Text style={styles.statusDetail} numberOfLines={1}>
-              {developerMode
-                ? connected ? `${deviceName || 'Simulador'}` : 'Pulsa "Iniciar simulación"'
-                : connected
+              {connected
                   ? staleData ? (statusDetail || 'Esperando telemetría...') : deviceName
                   : 'Toca para conectar tu casco'}
             </Text>
           </View>
-          {!developerMode && (
-            <Ionicons name="chevron-forward" size={18} color={COLORS.textDim} />
-          )}
+          <Ionicons name="chevron-forward" size={18} color={COLORS.textDim} />
         </TouchableOpacity>
 
         <View style={styles.ringCard}>
@@ -334,49 +329,35 @@ useEffect(() => {
           <MetricCard label="FUERZA G" value={telemetry?.g_force} unit="g" color={COLORS.accent} live={liveData} />
         </View>
 
-        {!developerMode ? (
-          connected ? (
-            <TouchableOpacity
-              style={[styles.primaryBtn, styles.primaryBtnDanger]}
-              onPress={disconnect}
-              activeOpacity={0.8}
-              testID="disconnect-btn"
-            >
-              <Ionicons name="bluetooth" size={18} color="#FFF" />
-              <Text style={styles.primaryBtnText}>DESCONECTAR</Text>
-            </TouchableOpacity>
-          ) : (
-            <TouchableOpacity
-              style={styles.primaryBtn}
-              onPress={() => router.push('/devices')}
-              activeOpacity={0.8}
-              testID="connect-btn"
-            >
-              <Ionicons name="bluetooth" size={18} color="#0A0A0A" />
-              <Text style={[styles.primaryBtnText, { color: '#0A0A0A' }]}>CONECTAR CASCO BLE</Text>
-            </TouchableOpacity>
-          )
+        {connected ? (
+          <TouchableOpacity
+            style={[styles.primaryBtn, styles.primaryBtnDanger]}
+            onPress={disconnect}
+            activeOpacity={0.8}
+            testID="disconnect-btn"
+          >
+            <Ionicons name="bluetooth" size={18} color="#FFF" />
+            <Text style={styles.primaryBtnText}>DESCONECTAR</Text>
+          </TouchableOpacity>
         ) : (
           <TouchableOpacity
-            style={[styles.primaryBtn, connected ? styles.primaryBtnDanger : styles.primaryBtnDev]}
-            onPress={handleDevStart}
+            style={styles.primaryBtn}
+            onPress={() => router.push('/devices')}
             activeOpacity={0.8}
-            testID="dev-toggle-btn"
+            testID="connect-btn"
           >
-            <Ionicons name="construct" size={18} color={connected ? '#FFF' : '#0A0A0A'} />
-            <Text style={[styles.primaryBtnText, { color: connected ? '#FFF' : '#0A0A0A' }]}>
-              {connected ? 'DETENER SIMULACIÓN' : 'INICIAR SIMULACIÓN'}
-            </Text>
+            <Ionicons name="bluetooth" size={18} color="#0A0A0A" />
+            <Text style={[styles.primaryBtnText, { color: '#0A0A0A' }]}>CONECTAR CASCO BLE</Text>
           </TouchableOpacity>
         )}
 
-        {!developerMode && !nativeAvailable && (
+        {!nativeAvailable && (
           <View style={styles.infoBox}>
             <Ionicons name="information-circle" size={14} color={COLORS.info} />
             <Text style={styles.infoText}>Bluetooth real disponible solo en build nativa (expo-dev-client).</Text>
           </View>
         )}
-        {!developerMode && nativeAvailable && !connected && (
+        {nativeAvailable && !connected && (
           <View style={styles.infoBox}>
             <Ionicons name="radio" size={14} color={COLORS.info} />
             <Text style={styles.infoText}>Buscando: {pattern} · HC-05 · HC-10 · HM-10 · MLT-BT05 · CRASH</Text>

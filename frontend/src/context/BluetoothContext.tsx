@@ -1,6 +1,5 @@
 import React, { createContext, useContext, useEffect, useRef, useState, useCallback } from 'react';
 import { bluetoothService, TelemetryData, ScanDevice, BluetoothStatus } from '../services/bluetooth';
-import { useAppSettings } from './AppSettingsContext';
 
 type BluetoothCtx = {
   status: BluetoothStatus;
@@ -14,15 +13,12 @@ type BluetoothCtx = {
   startDeviceScan: (onFound: (d: ScanDevice) => void) => Promise<void>;
   connect: (id: string) => Promise<boolean>;
   disconnect: () => Promise<void>;
-  startSimulation: () => void;
-  stopSimulation: () => void;
 };
 
 const BluetoothContext = createContext<BluetoothCtx>({} as any);
 export const useBluetooth = () => useContext(BluetoothContext);
 
 export function BluetoothProvider({ children }: { children: React.ReactNode }) {
-  const { developerMode, ready } = useAppSettings();
   const [status, setStatus] = useState<BluetoothStatus>('idle');
   const [statusDetail, setStatusDetail] = useState<string | undefined>();
   const [connected, setConnected] = useState(false);
@@ -41,10 +37,6 @@ export function BluetoothProvider({ children }: { children: React.ReactNode }) {
     return () => { unsubT(); unsubS(); unsubD(); };
   }, []);
 
-  useEffect(() => {
-    if (ready) bluetoothService.setSimulationMode(developerMode);
-  }, [developerMode, ready]);
-
   const requestPermissions = useCallback(() => bluetoothService.requestPermissions(), []);
   const startDeviceScan = useCallback(async (onFound: (d: ScanDevice) => void) => {
     await bluetoothService.startDeviceScan((dev) => {
@@ -62,8 +54,6 @@ export function BluetoothProvider({ children }: { children: React.ReactNode }) {
     <BluetoothContext.Provider value={{
       status, statusDetail, connected, device, telemetry, nativeAvailable, bluetoothEnabled,
       requestPermissions, startDeviceScan, connect, disconnect,
-      startSimulation: () => bluetoothService.startSimulation(),
-      stopSimulation: () => bluetoothService.stopSimulation(),
     }}>
       {children}
     </BluetoothContext.Provider>
