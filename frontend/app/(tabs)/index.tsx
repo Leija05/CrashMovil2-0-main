@@ -398,8 +398,12 @@ useEffect(() => {
       <Modal visible={!!alertResult} transparent animationType="fade">
         <View style={styles.overlay}>
           <View style={styles.dialog}>
-            <Text style={styles.dialogTitle}>Mensajes enviados</Text>
-            <Text style={styles.dialogText}>Se notificó a contactos de emergencia:</Text>
+            <Text style={styles.dialogTitle}>{alertResult?.alerts_sent ? 'Mensajes enviados' : 'No se enviaron mensajes'}</Text>
+            <Text style={styles.dialogText}>
+              {alertResult?.alerts_sent
+                ? 'Se notificó a contactos de emergencia:'
+                : (alertResult?.alert_error || 'No fue posible completar el envío de alertas.')}
+            </Text>
             {(alertResult?.alerted_contacts || []).map((c: any) => (
               <Text key={c.id} style={styles.contactSent}>{`• ${c.name} (${c.phone})`}</Text>
             ))}
