@@ -494,7 +494,8 @@ async def send_whatsapp_message(phone: str, message: str):
         "type": "text",
         "text": {"body": message}
     }
-    if WHATSAPP_COLLISION_TEMPLATE_NAME:
+    using_template = bool(WHATSAPP_COLLISION_TEMPLATE_NAME)
+    if using_template:
         payload = {
             "messaging_product": "whatsapp",
             "to": phone,
@@ -508,7 +509,16 @@ async def send_whatsapp_message(phone: str, message: str):
     async with httpx.AsyncClient() as http_client:
         resp = await http_client.post(url, json=payload, headers=headers)
         logger.info(f"WhatsApp response: {resp.status_code} - {resp.text}")
-        if resp.status_code >= 400 and WHATSAPP_COLLISION_TEMPLATE_NAME and WHATSAPP_TEMPLATE_FALLBACK_ON_24H:
+        response_json = resp.json() if resp.text else {}
+        error_code = (((response_json or {}).get("error") or {}).get("code"))
+
+        # Error 131047 = fuera de ventana de 24h: solo se permite plantilla.
+        # Si se usó plantilla y aún falla, devolvemos error directo.
+        if resp.status_code >= 400 and error_code == 131047:
+            raise HTTPException(status_code=resp.status_code, detail=f"WhatsApp 24h window error: {resp.text}")
+
+        # Fallback a texto solo para errores que NO sean de ventana 24h.
+        if resp.status_code >= 400 and using_template and WHATSAPP_TEMPLATE_FALLBACK_ON_24H:
             fallback_payload = {
                 "messaging_product": "whatsapp",
                 "to": phone,
