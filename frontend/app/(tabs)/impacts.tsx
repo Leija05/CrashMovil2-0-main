@@ -1,6 +1,6 @@
 import React, { useState, useCallback } from 'react';
 import {
-  View, Text, TouchableOpacity, StyleSheet, FlatList, RefreshControl, ActivityIndicator,
+  View, Text, TouchableOpacity, StyleSheet, FlatList, RefreshControl, ActivityIndicator, Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -42,21 +42,12 @@ export default function ImpactsScreen() {
     if (!token) return;
     setSimulating(true);
     try {
-      const data = bluetoothService.simulateImpact(severity);
-      const newImpact = await impactsAPI.create(token, {
-        acceleration_x: data.acceleration_x,
-        acceleration_y: data.acceleration_y,
-        acceleration_z: data.acceleration_z,
-        gyroscope_x: data.gyroscope_x,
-        gyroscope_y: data.gyroscope_y,
-        gyroscope_z: data.gyroscope_z,
-        g_force: data.g_force,
-        latitude: 19.4326,
-        longitude: -99.1332,
-      });
-      setImpacts((prev) => [newImpact, ...prev]);
+      bluetoothService.simulateImpact(severity);
+      Alert.alert('Simulación iniciada', 'Se envió el impacto simulado. Continúa el flujo en pantalla principal.');
+      router.push('/(tabs)');
     } catch (e: any) {
       console.error(e);
+      Alert.alert('Error', 'No se pudo simular el impacto');
     } finally { setSimulating(false); }
   };
 

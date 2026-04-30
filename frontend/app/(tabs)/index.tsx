@@ -9,7 +9,7 @@ import { COLORS, RADIUS, SPACING, severityColor, severityLabel } from '../../src
 import { useAuth } from '../../src/context/AuthContext';
 import { useBluetooth } from '../../src/context/BluetoothContext';
 import { useAppSettings } from '../../src/context/AppSettingsContext';
-import { impactsAPI } from '../../src/services/api';
+import { impactsAPI, settingsAPI } from '../../src/services/api';
 
 const MAX_G_RING = 12;
 const SEGMENTS = 40;
@@ -31,6 +31,7 @@ export default function DashboardScreen() {
   const [countdown, setCountdown] = useState<number | null>(null);
   const [sending, setSending] = useState(false);
   const [alertResult, setAlertResult] = useState<any | null>(null);
+  const [countdownSeconds, setCountdownSeconds] = useState(8);
 
   useEffect(() => {
     if (telemetry) {
@@ -39,6 +40,23 @@ export default function DashboardScreen() {
       if (telemetry.g_force > peakG) setPeakG(telemetry.g_force);
     }
   }, [telemetry, peakG]);
+
+
+  useEffect(() => {
+    const loadSettings = async () => {
+      if (!token) return;
+      try {
+        const s = await settingsAPI.get(token);
+        const fromServer = Number(s?.countdown_seconds ?? s?.emergency_countdown_seconds ?? 8);
+        if (!Number.isNaN(fromServer) && fromServer >= 3 && fromServer <= 60) {
+          setCountdownSeconds(Math.round(fromServer));
+        }
+      } catch (e) {
+        console.warn('No se pudo cargar countdown de usuario', e);
+      }
+    };
+    loadSettings();
+  }, [token]);
 
   useEffect(() => {
     const t = setInterval(() => {
@@ -68,9 +86,9 @@ export default function DashboardScreen() {
 
   useEffect(() => {
     if (highImpact && countdown === null && !sending) {
-      setCountdown(8);
+      setCountdown(countdownSeconds);
     }
-  }, [highImpact, countdown, sending]);
+  }, [highImpact, countdown, sending, countdownSeconds]);
 
   useEffect(() => {
     if (countdown === null) return;

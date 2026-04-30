@@ -21,6 +21,7 @@ export default function SettingsScreen() {
   const [threshold, setThreshold] = useState('5');
   const [autoCall, setAutoCall] = useState(true);
   const [autoWhatsapp, setAutoWhatsapp] = useState(true);
+  const [countdownSeconds, setCountdownSeconds] = useState('8');
   const [deviceInput, setDeviceInput] = useState(deviceName);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -34,6 +35,7 @@ export default function SettingsScreen() {
       setThreshold(String(s.alert_threshold ?? 5));
       setAutoCall(s.auto_call !== false);
       setAutoWhatsapp(s.auto_whatsapp !== false);
+      setCountdownSeconds(String(s.countdown_seconds ?? 8));
     } catch (e) { console.error(e); }
     finally { setLoading(false); }
   }, [token]);
@@ -47,9 +49,14 @@ export default function SettingsScreen() {
       Alert.alert('Error', 'El umbral debe ser un número positivo');
       return;
     }
+    const c = parseInt(countdownSeconds, 10);
+    if (isNaN(c) || c < 3 || c > 60) {
+      Alert.alert('Error', 'La cuenta regresiva debe estar entre 3 y 60 segundos');
+      return;
+    }
     setSaving(true);
     try {
-      await settingsAPI.update(token, { alert_threshold: t, auto_call: autoCall, auto_whatsapp: autoWhatsapp });
+      await settingsAPI.update(token, { alert_threshold: t, auto_call: autoCall, auto_whatsapp: autoWhatsapp, countdown_seconds: c });
       Alert.alert('Guardado', 'Configuración de alertas actualizada');
     } catch (e: any) {
       Alert.alert('Error', e.message);
@@ -131,6 +138,20 @@ export default function SettingsScreen() {
           {/* ─── Developer Mode ─── */}
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>MODO DE OPERACIÓN</Text>
+
+            <View style={styles.inputGroup}>
+              <Text style={styles.label}>CUENTA REGRESIVA DE EMERGENCIA</Text>
+              <Text style={styles.helper}>Segundos antes de enviar mensajes tras detectar impacto alto.</Text>
+              <View style={styles.thresholdRow}>
+                <TextInput
+                  style={[styles.input, { width: 100, textAlign: 'center', fontSize: 18, fontWeight: '800' }]}
+                  value={countdownSeconds}
+                  onChangeText={setCountdownSeconds}
+                  keyboardType="numeric"
+                />
+                <Text style={styles.gSymbol}>s</Text>
+              </View>
+            </View>
             <View style={styles.toggleRow}>
               <View style={{ flex: 1 }}>
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>

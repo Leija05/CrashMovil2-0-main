@@ -277,6 +277,34 @@ class BluetoothTelemetryService {
     }, 500);
   }
 
+
+  simulateImpact(severity: 'low' | 'medium' | 'high' | 'critical') {
+    const ranges: Record<typeof severity, [number, number]> = {
+      low: [3.5, 4.9],
+      medium: [6.5, 9.5],
+      high: [10.5, 14.5],
+      critical: [15.5, 22.0],
+    };
+    const [min, max] = ranges[severity];
+    const gForce = Number((Math.random() * (max - min) + min).toFixed(2));
+    const data: TelemetryData = {
+      acceleration_x: Number(((Math.random() * 12) - 6).toFixed(2)),
+      acceleration_y: Number(((Math.random() * 12) - 6).toFixed(2)),
+      acceleration_z: Number((gForce * 9.81).toFixed(2)),
+      gyroscope_x: Number(((Math.random() * 4) - 2).toFixed(2)),
+      gyroscope_y: Number(((Math.random() * 4) - 2).toFixed(2)),
+      gyroscope_z: Number(((Math.random() * 4) - 2).toFixed(2)),
+      g_force: gForce,
+      timestamp: Date.now(),
+    };
+
+    this.connected = true;
+    this.emitStatus('connected', 'Simulación de impacto activa');
+    this.emitTelemetry(data);
+
+    return data;
+  }
+
   stopSimulation() {
     if (this.simulationTimer) clearInterval(this.simulationTimer);
     this.connected = false;
