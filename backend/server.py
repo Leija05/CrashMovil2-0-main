@@ -39,6 +39,9 @@ WHATSAPP_APP_SECRET = os.environ.get("WHATSAPP_APP_SECRET", "")
 WHATSAPP_COLLISION_TEMPLATE_NAME = os.environ.get("WHATSAPP_COLLISION_TEMPLATE_NAME", "")
 WHATSAPP_TEMPLATE_LANGUAGE = os.environ.get("WHATSAPP_TEMPLATE_LANGUAGE", "es_MX")
 WHATSAPP_TEMPLATE_FALLBACK_ON_24H = os.environ.get("WHATSAPP_TEMPLATE_FALLBACK_ON_24H", "true").lower() == "true"
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
+GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
+COHERE_API_KEY = os.environ.get("COHERE_API_KEY", "")
 
 client = AsyncIOMotorClient(MONGO_URL)
 db = client[DB_NAME]
