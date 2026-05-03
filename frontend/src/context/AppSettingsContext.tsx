@@ -7,6 +7,8 @@ type AppSettings = {
   // actions
   setDeveloperMode: (v: boolean) => Promise<void>;
   setDeviceName: (v: string) => Promise<void>;
+  alertsConfigVersion: number;
+  notifyAlertsConfigChanged: () => void;
   ready: boolean;
 };
 
@@ -19,6 +21,8 @@ const AppSettingsContext = createContext<AppSettings>({
   ...DEFAULTS,
   setDeveloperMode: async () => {},
   setDeviceName: async () => {},
+  alertsConfigVersion: 0,
+  notifyAlertsConfigChanged: () => {},
   ready: false,
 });
 
@@ -30,6 +34,7 @@ export function AppSettingsProvider({ children }: { children: React.ReactNode })
   const [developerMode, setDevMode] = useState(DEFAULTS.developerMode);
   const [deviceName, setDevName] = useState(DEFAULTS.deviceName);
   const [ready, setReady] = useState(false);
+  const [alertsConfigVersion, setAlertsConfigVersion] = useState(0);
 
   useEffect(() => {
     (async () => {
@@ -62,9 +67,13 @@ export function AppSettingsProvider({ children }: { children: React.ReactNode })
     await persist({ developerMode, deviceName: v });
   }, [developerMode]);
 
+  const notifyAlertsConfigChanged = useCallback(() => {
+    setAlertsConfigVersion((v) => v + 1);
+  }, []);
+
   return (
     <AppSettingsContext.Provider
-      value={{ developerMode, deviceName, setDeveloperMode, setDeviceName, ready }}
+      value={{ developerMode, deviceName, setDeveloperMode, setDeviceName, alertsConfigVersion, notifyAlertsConfigChanged, ready }}
     >
       {children}
     </AppSettingsContext.Provider>

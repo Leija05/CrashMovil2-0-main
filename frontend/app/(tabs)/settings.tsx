@@ -15,7 +15,7 @@ import { settingsAPI } from '../../src/services/api';
 export default function SettingsScreen() {
   const router = useRouter();
   const { token, logout } = useAuth();
-  const { deviceName, setDeviceName } = useAppSettings();
+  const { deviceName, setDeviceName, notifyAlertsConfigChanged } = useAppSettings();
   const { connected, deviceName: liveDevice, disconnect, nativeAvailable } = useBluetooth();
 
   const [threshold, setThreshold] = useState('5');
@@ -57,6 +57,7 @@ export default function SettingsScreen() {
     setSaving(true);
     try {
       await settingsAPI.update(token, { alert_threshold: t, auto_call: autoCall, auto_whatsapp: autoWhatsapp, countdown_seconds: c });
+      notifyAlertsConfigChanged();
       Alert.alert('Guardado', 'Configuración de alertas actualizada');
     } catch (e: any) {
       Alert.alert('Error', e.message);
@@ -79,6 +80,7 @@ export default function SettingsScreen() {
           text: 'Sí',
           style: 'destructive',
           onPress: async () => {
+            if (connected) disconnect();
             await logout();
             router.replace('/login');
           }
