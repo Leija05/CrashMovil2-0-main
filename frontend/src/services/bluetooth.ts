@@ -28,6 +28,8 @@ export interface ScanDevice {
   connected: boolean;
 }
 
+export type TelemetrySeverity = 'critical' | 'normal';
+
 // UUIDs estándar para módulos BLE tipo HM-10 / MLT-BT05 / CRASH
 const SERVICE_UUID = '0000ffe0-0000-1000-8000-00805f9b34fb';
 const CHARACTERISTIC_UUID = '0000ffe1-0000-1000-8000-00805f9b34fb';
@@ -52,6 +54,9 @@ class BluetoothTelemetryService {
   private monitorSubscription: Subscription | null = null;
   private readBuffer = '';
   private connected = false;
+  private lastTelemetryAt = 0;
+  private reconnectAttempts = 0;
+  private lastCriticalG = 0;
 
   constructor() {
     this.bleManager.setLogLevel(LogLevel.None);
@@ -79,6 +84,8 @@ class BluetoothTelemetryService {
   private emitDevice(d: any | null) { this.deviceListeners.forEach(l => l(d)); }
   private emitStatus(s: BluetoothStatus, d?: string) { this.statusListeners.forEach(l => l(s, d)); }
   private emitTelemetry(d: TelemetryData) { this.telemetryListeners.forEach(l => l(d)); }
+
+  getConnectedDeviceId() { return this.connectedDevice?.id ?? null; }
 
   // --- Permisos y Escaneo ---
   async isBluetoothEnabled() {
@@ -149,9 +156,22 @@ class BluetoothTelemetryService {
       return true;
     } catch (e) {
       console.error('Error de conexión:', e);
-      this.emitStatus('error', 'Fallo de conexión');
+      const message = e instanceof Error ? e.message : String(e);
+      if (/already connected|already in use|busy|133|status 8/i.test(message)) {
+        this.emitStatus('error', 'El circuito ya está conectado en otro teléfono');
+      } else {
+        this.emitStatus('error', 'Fallo de conexión');
+      }
       return false;
     }
+  }
+
+  async reconnectToLastDevice(id: string): Promise<boolean> {
+    if (!id || this.connected || this.reconnectAttempts >= 3) return false;
+    this.reconnectAttempts += 1;
+    const ok = await this.connectToDevice(id);
+    if (ok) this.reconnectAttempts = 0;
+    return ok;
   }
 
   private normalizeUuid(uuid: string) {
@@ -212,7 +232,13 @@ class BluetoothTelemetryService {
       if (line.length > 0) {
         const parsed = this.parseLine(line);
         if (parsed) {
-          this.emitTelemetry(parsed);
+          const now = Date.now();
+          const isCritical = parsed.g_force >= 5;
+          const enoughTime = now - this.lastTelemetryAt > 120;
+          if (isCritical || enoughTime) {
+            this.lastTelemetryAt = now;
+            this.emitTelemetry(parsed);
+          }
         }
       }
       breakIndex = this.readBuffer.indexOf('\n');
@@ -221,6 +247,7 @@ class BluetoothTelemetryService {
 
   private parseLine(raw: string): TelemetryData | null {
     try {
+      if (!/(AVG|CRASH):/i.test(raw)) return null;
       // 1. Separar el prefijo (AVG/CRASH) de los datos numéricos usando el ":"
       const parts = raw.split(':');
       const dataToParse = parts.length > 1 ? parts[1] : parts[0];
@@ -231,6 +258,9 @@ class BluetoothTelemetryService {
 
       // 3. Validar que tengamos los 7 campos (ax, ay, az, gx, gy, gz, gForce)
       if (n.length >= 7 && n.every(val => !isNaN(val))) {
+        const gForce = Math.max(0, n[6]);
+        if (Math.abs(gForce - this.lastCriticalG) < 0.05 && gForce < 5) return null;
+        if (gForce >= 5) this.lastCriticalG = gForce;
         return {
           acceleration_x: n[0],
           acceleration_y: n[1],
@@ -238,7 +268,7 @@ class BluetoothTelemetryService {
           gyroscope_x: n[3],
           gyroscope_y: n[4],
           gyroscope_z: n[5],
-          g_force: n[6],
+          g_force: gForce,
           timestamp: Date.now()
         };
       }
@@ -262,6 +292,7 @@ class BluetoothTelemetryService {
       }
     }
     this.connected = false;
+    this.lastTelemetryAt = 0;
     this.connectedDevice = null;
     this.readBuffer = '';
     this.emitDevice(null);

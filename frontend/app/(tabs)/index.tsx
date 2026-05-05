@@ -4,7 +4,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { useRouter } from 'expo-router';
+import { useRouter, useFocusEffect } from 'expo-router';
 import * as Location from 'expo-location';
 import { COLORS, RADIUS, SPACING, severityColor, severityLabel } from '../../src/theme';
 import { useAuth } from '../../src/context/AuthContext';
@@ -33,6 +33,7 @@ export default function DashboardScreen() {
   const telemetryRef = useRef(telemetry); 
   const [staleData, setStaleData] = useState(false);
   const impactTriggeredRef = useRef(false);
+  const manualSendRef = useRef(false);
 
  
   const [countdown, setCountdown] = useState<number | null>(null);
@@ -69,18 +70,19 @@ useEffect(() => {
     loadSettings();
   }, [token, alertsConfigVersion]);
 
-  useEffect(() => {
-    const loadContactsState = async () => {
-      if (!token) return;
-      try {
-        const contacts = await contactsAPI.list(token);
-        setHasEmergencyContacts(Array.isArray(contacts) && contacts.length > 0);
-      } catch (e) {
-        console.warn('No se pudo validar contactos de emergencia', e);
-      }
-    };
-    loadContactsState();
+  const loadContactsState = useCallback(async () => {
+    if (!token) return;
+    try {
+      const contacts = await contactsAPI.list(token);
+      setHasEmergencyContacts(Array.isArray(contacts) && contacts.length > 0);
+    } catch (e) {
+      console.warn('No se pudo validar contactos de emergencia', e);
+    }
   }, [token]);
+
+  useFocusEffect(useCallback(() => {
+    loadContactsState();
+  }, [loadContactsState]));
 
   useEffect(() => {
     const t = setInterval(() => {
@@ -118,7 +120,7 @@ useEffect(() => {
   }, [liveData, gForce, alertThreshold]);
 
   useEffect(() => {
-    if (countdown === null) return;
+    if (countdown === null || manualSendRef.current) return;
     if (countdown <= 0) {
       setCountdown(null);
       triggerEmergencyFlow();
@@ -368,9 +370,9 @@ useEffect(() => {
               <TouchableOpacity style={styles.cancelBtnSoft} onPress={() => setCountdown(null)}>
                 <Text style={styles.cancelSoftText}>Cancelar</Text>
               </TouchableOpacity>
-              <TouchableOpacity style={styles.cancelBtn} onPress={() => { setCountdown(null); triggerEmergencyFlow(); }}>
-                <Text style={styles.cancelText}>Enviar ahora</Text>
-              </TouchableOpacity>
+            <TouchableOpacity style={styles.cancelBtn} onPress={() => { manualSendRef.current = true; setCountdown(null); triggerEmergencyFlow().finally(() => { manualSendRef.current = false; }); }}>
+              <Text style={styles.cancelText}>Enviar ahora</Text>
+            </TouchableOpacity>
             </View>
           </View>
         </View>
@@ -388,7 +390,7 @@ useEffect(() => {
               <Text key={c.id} style={styles.contactSent}>{`• ${c.name} (${c.phone})`}</Text>
             ))}
             <TouchableOpacity style={styles.cancelBtn} onPress={() => setAlertResult(null)}>
-              <Text style={styles.cancelText}>Cerrar</Text>
+              <Text style={styles.cancelText}>Aceptar</Text>
             </TouchableOpacity>
           </View>
         </View>
