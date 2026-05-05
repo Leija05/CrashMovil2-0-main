@@ -6,7 +6,7 @@ if (!global.Buffer) {
   global.Buffer = Buffer;
 }
 
-export type BluetoothStatus = 'idle' | 'scanning' | 'connecting' | 'connected' | 'error';
+export type BluetoothStatus = 'idle' | 'scanning' | 'connecting' | 'connected' | 'error' | 'busy';
 
 export interface TelemetryData {
   acceleration_x: number;
@@ -52,6 +52,8 @@ class BluetoothTelemetryService {
   private monitorSubscription: Subscription | null = null;
   private readBuffer = '';
   private connected = false;
+  private lastEmitAt = 0;
+  private lastGForce = 0;
 
   constructor() {
     this.bleManager.setLogLevel(LogLevel.None);
@@ -149,7 +151,8 @@ class BluetoothTelemetryService {
       return true;
     } catch (e) {
       console.error('Error de conexión:', e);
-      this.emitStatus('error', 'Fallo de conexión');
+      const detail = `${e}`.toLowerCase().includes('already connected') ? 'El circuito ya está conectado en otro teléfono.' : 'Fallo de conexión';
+      this.emitStatus(`${e}`.toLowerCase().includes('already connected') ? 'busy' : 'error', detail);
       return false;
     }
   }
@@ -212,7 +215,13 @@ class BluetoothTelemetryService {
       if (line.length > 0) {
         const parsed = this.parseLine(line);
         if (parsed) {
-          this.emitTelemetry(parsed);
+          const now = Date.now();
+          const isCriticalJump = Math.abs(parsed.g_force - this.lastGForce) >= 0.35 || parsed.g_force >= 4.5;
+          if (isCriticalJump || now - this.lastEmitAt >= 200) {
+            this.lastEmitAt = now;
+            this.lastGForce = parsed.g_force;
+            this.emitTelemetry(parsed);
+          }
         }
       }
       breakIndex = this.readBuffer.indexOf('\n');

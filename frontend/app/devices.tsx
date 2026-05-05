@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useEffect } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, FlatList, ActivityIndicator, RefreshControl } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, FlatList, ActivityIndicator, TextInput } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
@@ -9,9 +9,10 @@ import type { ScanDevice } from '../src/services/bluetooth';
 
 export default function DevicesScreen() {
   const router = useRouter();
-  const { startDeviceScan, connect, status, statusDetail, disconnect, connected } = useBluetooth();
+  const { startDeviceScan, connect, status, statusDetail, savedDeviceName, setSavedDeviceName } = useBluetooth();
   const [devices, setDevices] = useState<ScanDevice[]>([]);
   const [scanning, setScanning] = useState(false);
+  const [customName, setCustomName] = useState('');
 
   const scan = useCallback(async () => {
     setDevices([]);
@@ -26,6 +27,7 @@ export default function DevicesScreen() {
   }, [startDeviceScan]);
 
   useEffect(() => { scan(); }, []);
+  useEffect(() => { if (savedDeviceName) setCustomName(savedDeviceName); }, [savedDeviceName]);
 
   const handleConnect = async (id: string) => {
     const ok = await connect(id);
@@ -39,6 +41,11 @@ export default function DevicesScreen() {
         <TouchableOpacity onPress={scan} disabled={scanning}>
           {scanning ? <ActivityIndicator color={COLORS.accent} /> : <Ionicons name="refresh" size={24} color={COLORS.accent} />}
         </TouchableOpacity>
+      </View>
+
+      <View style={styles.nameWrap}>
+        <Text style={styles.nameLabel}>NOMBRE DEL DISPOSITIVO</Text>
+        <TextInput value={customName} onChangeText={setCustomName} placeholder="Ej. Casco CRASH" placeholderTextColor={COLORS.textDim} style={styles.nameInput} onEndEditing={() => setSavedDeviceName(customName.trim())} />
       </View>
 
       <FlatList
@@ -57,6 +64,7 @@ export default function DevicesScreen() {
         ListEmptyComponent={<Text style={styles.empty}>No se encontraron dispositivos BLE...</Text>}
       />
       <Text style={styles.footer}>Estado: {statusDetail || status}</Text>
+      {status === 'busy' && <Text style={styles.busy}>Este circuito parece estar conectado en otro teléfono.</Text>}
     </SafeAreaView>
   );
 }
@@ -69,5 +77,9 @@ const styles = StyleSheet.create({
   deviceName: { color: COLORS.text, fontWeight: '700' },
   deviceAddr: { color: COLORS.textDim, fontSize: 10 },
   empty: { color: COLORS.textDim, textAlign: 'center', marginTop: 50 },
-  footer: { color: COLORS.textDim, fontSize: 10, textAlign: 'center', marginTop: 20 }
+  nameWrap: { marginBottom: 14 },
+  nameLabel: { color: COLORS.textDim, fontSize: 10, marginBottom: 6, letterSpacing: 1 },
+  nameInput: { backgroundColor: COLORS.surface, borderRadius: RADIUS.md, paddingHorizontal: 12, paddingVertical: 10, color: COLORS.text },
+  footer: { color: COLORS.textDim, fontSize: 10, textAlign: 'center', marginTop: 20 },
+  busy: { color: COLORS.warning, textAlign: 'center', fontSize: 12, marginTop: 6 }
 });

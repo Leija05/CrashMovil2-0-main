@@ -4,7 +4,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { useRouter } from 'expo-router';
+import { useRouter, useFocusEffect } from 'expo-router';
 import * as Location from 'expo-location';
 import { COLORS, RADIUS, SPACING, severityColor, severityLabel } from '../../src/theme';
 import { useAuth } from '../../src/context/AuthContext';
@@ -21,7 +21,7 @@ export default function DashboardScreen() {
   const router = useRouter();
   const { deviceName: pattern, alertsConfigVersion } = useAppSettings();
   const {
-    connected, telemetry, statusDetail, deviceName,
+    connected, telemetry, statusDetail, device,
     disconnect, nativeAvailable,
   } = useBluetooth();
 
@@ -69,8 +69,7 @@ useEffect(() => {
     loadSettings();
   }, [token, alertsConfigVersion]);
 
-  useEffect(() => {
-    const loadContactsState = async () => {
+  const loadContactsState = useCallback(async () => {
       if (!token) return;
       try {
         const contacts = await contactsAPI.list(token);
@@ -78,9 +77,11 @@ useEffect(() => {
       } catch (e) {
         console.warn('No se pudo validar contactos de emergencia', e);
       }
-    };
-    loadContactsState();
   }, [token]);
+
+  useFocusEffect(useCallback(() => {
+    loadContactsState();
+  }, [loadContactsState]));
 
   useEffect(() => {
     const t = setInterval(() => {
@@ -269,7 +270,7 @@ useEffect(() => {
             </Text>
             <Text style={styles.statusDetail} numberOfLines={1}>
               {connected
-                  ? staleData ? (statusDetail || 'Esperando telemetría...') : deviceName
+                  ? staleData ? (statusDetail || 'Esperando telemetría...') : (device?.name || 'Casco conectado')
                   : 'Toca para conectar tu casco'}
             </Text>
           </View>
@@ -388,7 +389,7 @@ useEffect(() => {
               <Text key={c.id} style={styles.contactSent}>{`• ${c.name} (${c.phone})`}</Text>
             ))}
             <TouchableOpacity style={styles.cancelBtn} onPress={() => setAlertResult(null)}>
-              <Text style={styles.cancelText}>Cerrar</Text>
+              <Text style={styles.cancelText}>Aceptar</Text>
             </TouchableOpacity>
           </View>
         </View>
