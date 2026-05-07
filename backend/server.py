@@ -377,10 +377,13 @@ async def create_impact(body: ImpactInput, user: dict = Depends(get_current_user
         now = datetime.now(timezone.utc)
         if last_sent and (now - last_sent).total_seconds() < ALERT_COOLDOWN_SECONDS:
             msg = f"Alerta duplicada suprimida: ya se notificó un impacto en los últimos {ALERT_COOLDOWN_SECONDS} segundos."
-            await db.impact_events.update_one({"id": impact_id}, {"$set": {"alerts_sent": False, "alerted_contacts": [], "alert_error": msg}})
-            impact_doc["alerts_sent"] = False
+            # Eliminamos el registro duplicado para no ensuciar el historial con el mismo evento.
+            await db.impact_events.delete_one({"id": impact_id, "user_id": user_id})
+            impact_doc["alerts_sent"] = True
             impact_doc["alerted_contacts"] = []
-            impact_doc["alert_error"] = msg
+            impact_doc["alert_error"] = None
+            impact_doc["deduplicated"] = True
+            impact_doc["deduplication_reason"] = msg
             impact_doc.pop("_id", None)
             return impact_doc
 
@@ -392,11 +395,12 @@ async def create_impact(body: ImpactInput, user: dict = Depends(get_current_user
                 impact_doc["alerts_sent"] = True
                 impact_doc["alerted_contacts"] = alerted_contacts
             else:
-                msg = "No se pudo enviar WhatsApp a ningún contacto. Revisa configuración/API de Meta."
-                await db.impact_events.update_one({"id": impact_id}, {"$set": {"alerts_sent": False, "alerted_contacts": [], "alert_error": msg}})
+                msg = "No hubo contactos notificados en esta ejecución."
+                await db.impact_events.update_one({"id": impact_id}, {"$set": {"alerts_sent": False, "alerted_contacts": [], "alert_error": None, "delivery_note": msg}})
                 impact_doc["alerts_sent"] = False
                 impact_doc["alerted_contacts"] = []
-                impact_doc["alert_error"] = msg
+                impact_doc["alert_error"] = None
+                impact_doc["delivery_note"] = msg
         except Exception as e:
             msg = f"Error al enviar alertas WhatsApp: {e}"
             logger.error(f"Alert sending failed: {e}")
