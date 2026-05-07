@@ -6,7 +6,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { useAuth } from '../../src/context/AuthContext';
-import { impactsAPI } from '../../src/services/api';
+import { impactsAPI, statsAPI } from '../../src/services/api';
 import { COLORS, RADIUS, SPACING } from '../../src/theme';
 
 function sevColor(s: string) {
@@ -22,12 +22,15 @@ export default function ImpactsScreen() {
   const [impacts, setImpacts] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [innovatecTotal, setInnovatecTotal] = useState<number>(0);
 
   const fetchImpacts = useCallback(async () => {
     if (!token) return;
     try {
       const data = await impactsAPI.list(token);
       setImpacts(data);
+      const stats = await statsAPI.innovatec(token);
+      setInnovatecTotal(Number(stats?.total_visitors || 0));
     } catch (e) { console.error(e); }
     finally { setLoading(false); setRefreshing(false); }
   }, [token]);
@@ -70,6 +73,7 @@ export default function ImpactsScreen() {
         <View>
           <Text style={styles.title}>IMPACTOS</Text>
           <Text style={styles.countText}>{impacts.length} eventos registrados</Text>
+          <Text style={styles.countText}>Visitantes Innovatec: {innovatecTotal}</Text>
         </View>
       </View>
 

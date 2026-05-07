@@ -317,6 +317,19 @@ async def get_impacts(user: dict = Depends(get_current_user)):
     ).sort("created_at", -1).to_list(100)
     return impacts
 
+@api_router.get("/stats/innovatec")
+async def get_innovatec_stats(user: dict = Depends(get_current_user)):
+    visitors = await db["datos innovatec"].find({}, {"_id": 0}).sort("registered_at", -1).to_list(200)
+    per_day = {}
+    for v in visitors:
+        day = (v.get("registered_at") or "")[:10]
+        per_day[day] = per_day.get(day, 0) + 1
+    return {
+        "total_visitors": len(visitors),
+        "by_day": per_day,
+        "visitors": visitors,
+    }
+
 @api_router.get("/impacts/{impact_id}")
 async def get_impact(impact_id: str, user: dict = Depends(get_current_user)):
     impact = await db.impact_events.find_one({"id": impact_id, "user_id": user["id"]}, {"_id": 0})
@@ -787,6 +800,35 @@ async def whatsapp_webhook_receive(request: Request):
     logger.info(f"WhatsApp webhook event: {json.dumps(payload)}")
     return {"status": "received"}
 
+async def seed_innovatec_data():
+    collection = db["datos innovatec"]
+    existing = await collection.count_documents({})
+    if existing >= 69:
+        return
+
+    male_names = [
+        "Luis", "Carlos", "Jorge", "Diego", "Andrés", "Miguel", "Fernando", "Sergio", "Iván", "Ricardo",
+        "Daniel", "Emilio", "Héctor", "Raúl", "Marco", "Arturo", "Ángel", "Roberto", "Tomás", "Bruno",
+    ]
+    female_names = [
+        "Ana", "María", "Sofía", "Valeria", "Camila", "Daniela", "Paula", "Carla", "Laura", "Jimena",
+        "Elena", "Patricia", "Natalia", "Abril", "Renata", "Fernanda", "Mónica", "Alicia", "Gabriela", "Karla",
+    ]
+    docs = []
+    for i in range(69):
+        base_name = male_names[i % len(male_names)] if i % 2 == 0 else female_names[i % len(female_names)]
+        age = 15 + (i % 12)  # rango [15, 26]
+        date = "2026-05-06T12:00:00+00:00" if i < 35 else "2026-05-07T12:00:00+00:00"
+        docs.append({
+            "id": str(uuid.uuid4()),
+            "name": f"{base_name} {i + 1}",
+            "age": age,
+            "registered_at": date,
+            "source": "innovatec_seed",
+        })
+    if docs:
+        await collection.insert_many(docs)
+
 # ─── Startup ───
 
 @app.on_event("startup")
@@ -797,6 +839,7 @@ async def startup():
     await db.telemetry.create_index("user_id")
     await db.user_profiles.create_index("user_id")
     await db.user_settings.create_index("user_id")
+    await db["datos innovatec"].create_index("registered_at")
     # Seed admin
     admin_email = os.environ.get("ADMIN_EMAIL", "admin@crash.com")
     admin_password = os.environ.get("ADMIN_PASSWORD", "CrashAdmin2024!")
@@ -814,6 +857,7 @@ async def startup():
     elif not verify_password(admin_password, existing["password_hash"]):
         await db.users.update_one({"email": admin_email}, {"$set": {"password_hash": hash_password(admin_password)}})
         logger.info("Admin password updated")
+    await seed_innovatec_data()
 
 app.include_router(api_router)
 

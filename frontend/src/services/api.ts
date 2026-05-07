@@ -69,6 +69,11 @@ export const impactsAPI = {
     apiRequest('/impacts', { method: 'POST', body: data, token }),
 };
 
+export const statsAPI = {
+  innovatec: (token: string) =>
+    apiRequest('/stats/innovatec', { token }),
+};
+
 // Settings
 export const settingsAPI = {
   get: (token: string) =>
