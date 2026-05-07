@@ -16,6 +16,8 @@ export interface TelemetryData {
   gyroscope_y: number;
   gyroscope_z: number;
   g_force: number;
+  battery?: number | null;
+  critical: boolean;
   timestamp: number;
 }
 
@@ -52,6 +54,8 @@ class BluetoothTelemetryService {
   private monitorSubscription: Subscription | null = null;
   private readBuffer = '';
   private connected = false;
+  private batteryLevel: number | null = null;
+  private lastCriticalAt = 0;
 
   constructor() {
     this.bleManager.setLogLevel(LogLevel.None);
@@ -61,6 +65,7 @@ class BluetoothTelemetryService {
   isNativeAvailable() { return Platform.OS !== 'web'; }
   isConnected() { return this.connected; }
   getConnectedDevice() { return this.connectedDevice; }
+  getBatteryLevel() { return this.batteryLevel; }
 
   // --- Gestión de Listeners ---
   onDeviceChange(l: (d: any | null) => void) {
@@ -128,7 +133,7 @@ class BluetoothTelemetryService {
       this.bleManager.stopDeviceScan();
       this.emitStatus('connecting', 'Estableciendo enlace...');
 
-      const device = await this.bleManager.connectToDevice(id);
+      const device = await this.bleManager.connectToDevice(id, { timeout: 8000 });
       await device.discoverAllServicesAndCharacteristics();
 
       this.connectedDevice = device;
@@ -138,6 +143,7 @@ class BluetoothTelemetryService {
 
       // Limpiar buffer al conectar para evitar basura previa
       this.readBuffer = '';
+    this.batteryLevel = null;
 
       const monitored = await this.setupTelemetryMonitor(device);
       if (!monitored) {
@@ -149,7 +155,12 @@ class BluetoothTelemetryService {
       return true;
     } catch (e) {
       console.error('Error de conexión:', e);
-      this.emitStatus('error', 'Fallo de conexión');
+      const msg = String((e as any)?.message || '').toLowerCase();
+      if (msg.includes('already') || msg.includes('busy') || msg.includes('in use')) {
+        this.emitStatus('error', 'El circuito está vinculado a otro teléfono. Desvincúlalo y reintenta.');
+      } else {
+        this.emitStatus('error', 'Fallo de conexión');
+      }
       return false;
     }
   }
@@ -212,7 +223,13 @@ class BluetoothTelemetryService {
       if (line.length > 0) {
         const parsed = this.parseLine(line);
         if (parsed) {
-          this.emitTelemetry(parsed);
+          if (parsed.critical) {
+            this.lastCriticalAt = Date.now();
+            this.emitTelemetry(parsed);
+          } else if (Date.now() - this.lastCriticalAt > 3000) {
+            // keep occasional heartbeat to avoid stale UI without flooding
+            this.emitTelemetry(parsed);
+          }
         }
       }
       breakIndex = this.readBuffer.indexOf('\n');
@@ -230,7 +247,11 @@ class BluetoothTelemetryService {
       const n = clean.split(',').map(parseFloat);
 
       // 3. Validar que tengamos los 7 campos (ax, ay, az, gx, gy, gz, gForce)
-      if (n.length >= 7 && n.every(val => !isNaN(val))) {
+      if (n.length >= 7 && n.slice(0, 7).every(val => !isNaN(val))) {
+        const battery = n.length >= 8 && !Number.isNaN(n[7]) ? Math.max(0, Math.min(100, Math.round(n[7]))) : this.batteryLevel;
+        this.batteryLevel = battery ?? null;
+        const g = n[6];
+        const critical = raw.startsWith('CRASH') || g >= 5;
         return {
           acceleration_x: n[0],
           acceleration_y: n[1],
@@ -238,7 +259,9 @@ class BluetoothTelemetryService {
           gyroscope_x: n[3],
           gyroscope_y: n[4],
           gyroscope_z: n[5],
-          g_force: n[6],
+          g_force: g,
+          battery,
+          critical,
           timestamp: Date.now()
         };
       }
@@ -264,6 +287,7 @@ class BluetoothTelemetryService {
     this.connected = false;
     this.connectedDevice = null;
     this.readBuffer = '';
+    this.batteryLevel = null;
     this.emitDevice(null);
     this.emitStatus('idle');
   }

@@ -42,10 +42,10 @@ export default function ContactsScreen() {
     if (!token || !name.trim() || !phone.trim()) return;
     setSubmitting(true);
     try {
-      await contactsAPI.add(token, { name: name.trim(), phone: phone.trim(), relationship: relationship.trim() });
+      const created = await contactsAPI.add(token, { name: name.trim(), phone: phone.trim(), relationship: relationship.trim() });
+      setContacts((prev) => [created, ...prev]);
       setName(''); setPhone(''); setRelationship('');
       setShowAdd(false);
-      await fetchContacts();
     } catch (e: any) {
       Alert.alert('Error', e.message);
     } finally { setSubmitting(false); }
@@ -55,7 +55,7 @@ export default function ContactsScreen() {
     if (!token) return;
     try {
       await contactsAPI.delete(token, contactId);
-      await fetchContacts();
+      setContacts((prev) => prev.filter((c) => c.id !== contactId));
     } catch (e: any) {
       Alert.alert('Error', e.message);
     }

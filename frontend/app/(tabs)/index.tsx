@@ -21,7 +21,7 @@ export default function DashboardScreen() {
   const router = useRouter();
   const { deviceName: pattern, alertsConfigVersion } = useAppSettings();
   const {
-    connected, telemetry, statusDetail, deviceName,
+    connected, telemetry, statusDetail, deviceName, batteryLevel,
     disconnect, nativeAvailable,
   } = useBluetooth();
 
@@ -269,7 +269,7 @@ useEffect(() => {
             </Text>
             <Text style={styles.statusDetail} numberOfLines={1}>
               {connected
-                  ? staleData ? (statusDetail || 'Esperando telemetría...') : deviceName
+                  ? staleData ? (statusDetail || 'Esperando telemetría...') : `${deviceName}${batteryLevel !== null ? ` · Batería ${batteryLevel}%` : ''}`
                   : 'Toca para conectar tu casco'}
             </Text>
           </View>
@@ -368,7 +368,7 @@ useEffect(() => {
               <TouchableOpacity style={styles.cancelBtnSoft} onPress={() => setCountdown(null)}>
                 <Text style={styles.cancelSoftText}>Cancelar</Text>
               </TouchableOpacity>
-              <TouchableOpacity style={styles.cancelBtn} onPress={() => { setCountdown(null); triggerEmergencyFlow(); }}>
+              <TouchableOpacity style={styles.cancelBtn} onPress={() => { setCountdown(null); impactTriggeredRef.current = true; triggerEmergencyFlow(); }}>
                 <Text style={styles.cancelText}>Enviar ahora</Text>
               </TouchableOpacity>
             </View>
@@ -388,7 +388,7 @@ useEffect(() => {
               <Text key={c.id} style={styles.contactSent}>{`• ${c.name} (${c.phone})`}</Text>
             ))}
             <TouchableOpacity style={styles.cancelBtn} onPress={() => setAlertResult(null)}>
-              <Text style={styles.cancelText}>Cerrar</Text>
+              <Text style={styles.cancelText}>Aceptar</Text>
             </TouchableOpacity>
           </View>
         </View>
