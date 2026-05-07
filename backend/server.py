@@ -280,6 +280,7 @@ async def get_contacts(user: dict = Depends(get_current_user)):
 
 @api_router.post("/contacts")
 async def add_contact(body: ContactInput, user: dict = Depends(get_current_user)):
+    whatsapp_validation = await validate_whatsapp_contact(body.phone.strip())
     contact_doc = {
         "id": str(uuid.uuid4()),
         "user_id": user["id"],
@@ -288,7 +289,8 @@ async def add_contact(body: ContactInput, user: dict = Depends(get_current_user)
         "relationship": body.relationship.strip() if body.relationship else "",
         "verified": True,
         "verified_at": datetime.now(timezone.utc).isoformat(),
-        "created_at": datetime.now(timezone.utc).isoformat()
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "whatsapp_validation": whatsapp_validation,
     }
     await db.emergency_contacts.insert_one(contact_doc)
     contact_doc.pop("_id", None)
@@ -637,6 +639,44 @@ async def send_whatsapp_message(phone: str, message: str, template_params: Optio
         if resp.status_code >= 400:
             raise HTTPException(status_code=resp.status_code, detail=f"WhatsApp API error: {resp.text}")
         return resp.json()
+
+async def validate_whatsapp_contact(phone: str) -> dict:
+    """
+    Valida si un teléfono existe en WhatsApp usando el endpoint /contacts.
+    Nota: en modo desarrollo de Meta, esto NO registra automáticamente el número
+    en la lista permitida; solo valida formato/existencia en WhatsApp.
+    """
+    url = f"https://graph.facebook.com/{WHATSAPP_API_VERSION}/{WHATSAPP_PHONE_NUMBER_ID}/contacts"
+    headers = {
+        "Authorization": f"Bearer {WHATSAPP_ACCESS_TOKEN}",
+        "Content-Type": "application/json",
+    }
+    payload = {"blocking": "wait", "contacts": [phone], "force_check": True}
+    async with httpx.AsyncClient() as http_client:
+        resp = await http_client.post(url, json=payload, headers=headers)
+        if resp.status_code >= 400:
+            return {
+                "checked": False,
+                "is_whatsapp_user": False,
+                "can_receive_in_dev_mode": False,
+                "reason": f"No se pudo validar en WhatsApp API: {resp.text}",
+            }
+        data = resp.json() if resp.text else {}
+        first = ((data.get("contacts") or [{}])[0]) if isinstance(data, dict) else {}
+        status = first.get("status")
+        is_valid = status == "valid"
+        return {
+            "checked": True,
+            "is_whatsapp_user": is_valid,
+            # Importante: validación != aprobado en lista de recipients de modo desarrollo.
+            "can_receive_in_dev_mode": False,
+            "status": status or "unknown",
+            "wa_id": first.get("wa_id"),
+            "reason": (
+                "Número válido en WhatsApp, pero en modo desarrollo debes agregarlo manualmente en "
+                "Meta Dashboard > WhatsApp > API Setup > Add recipient phone number."
+            ),
+        }
 
 def build_diagnosis_summary(diagnosis: dict | None) -> str:
     if not diagnosis:
