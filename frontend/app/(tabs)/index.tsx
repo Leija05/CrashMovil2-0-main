@@ -31,6 +31,7 @@ export default function DashboardScreen() {
   const lastDataRef = useRef<number>(Date.now());
 
   const telemetryRef = useRef(telemetry); 
+  const impactTelemetryRef = useRef(telemetry);
   const [staleData, setStaleData] = useState(false);
   const impactTriggeredRef = useRef(false);
 
@@ -42,7 +43,7 @@ export default function DashboardScreen() {
   const [alertThreshold, setAlertThreshold] = useState(5);
   const [hasEmergencyContacts, setHasEmergencyContacts] = useState(true);
 
-useEffect(() => {
+  useEffect(() => {
     if (!telemetry) return;
     if (countdown !== null) return;
     telemetryRef.current = telemetry;
@@ -99,7 +100,7 @@ useEffect(() => {
   }, []);
 
 
-  const telemetryForDisplay = countdown !== null ? telemetryRef.current : telemetry;
+  const telemetryForDisplay = countdown !== null ? impactTelemetryRef.current : telemetry;
   const gForce = telemetryForDisplay?.g_force ?? 0;
   const sevColor = severityColor(gForce);
   const sevLabel = severityLabel(gForce);
@@ -109,9 +110,10 @@ useEffect(() => {
   useEffect(() => {
     if (highImpact && countdown === null && !sending && !impactTriggeredRef.current) {
       impactTriggeredRef.current = true;
+      impactTelemetryRef.current = telemetry ?? telemetryRef.current;
       setCountdown(countdownSeconds);
     }
-  }, [highImpact, countdown, sending, countdownSeconds]);
+  }, [highImpact, countdown, sending, countdownSeconds, telemetry]);
 
   useEffect(() => {
     if (!liveData || gForce < alertThreshold) {
@@ -179,7 +181,7 @@ useEffect(() => {
     }
   }, [token, telemetry, sending, hasEmergencyContacts, router]);*/
   const triggerEmergencyFlow = useCallback(async () => {
-    const currentTelemetry = telemetryRef.current;
+    const currentTelemetry = impactTelemetryRef.current ?? telemetryRef.current;
     if (!token || !currentTelemetry || sending) return;
 
     if (!hasEmergencyContacts) {
