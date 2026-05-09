@@ -82,3 +82,9 @@ export const telemetryAPI = {
   send: (token: string, data: any) =>
     apiRequest('/telemetry', { method: 'POST', body: data, token }),
 };
+
+// False alarms
+export const falseAlarmAPI = {
+  create: (token: string, data: any) =>
+    apiRequest('/false-alarms', { method: 'POST', body: data, token }),
+};

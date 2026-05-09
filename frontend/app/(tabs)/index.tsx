@@ -121,65 +121,6 @@ export default function DashboardScreen() {
     }
   }, [liveData, gForce, alertThreshold]);
 
-  useEffect(() => {
-    if (countdown === null) return;
-    if (countdown <= 0) {
-      setCountdown(null);
-      triggerEmergencyFlow();
-      return;
-    }
-    const t = setTimeout(() => setCountdown((v) => (v === null ? null : v - 1)), 1000);
-    return () => clearTimeout(t);
-  }, [countdown, triggerEmergencyFlow]);
-
-  /*const triggerEmergencyFlow = useCallback(async () => {
-    if (!token || !telemetry || sending) return;
-    if (!hasEmergencyContacts) {
-      Alert.alert(
-        'No tienes contactos agregados',
-        'Antes de enviar alertas, registra al menos un contacto de emergencia.',
-        [
-          { text: 'Cancelar', style: 'cancel' },
-          { text: 'Ir a Contactos', onPress: () => router.push('/contacts') },
-        ]
-      );
-      return;
-    }
-    setSending(true);
-    try {
-      let latitude: number | null = null;
-      let longitude: number | null = null;
-      try {
-        const { status } = await Location.requestForegroundPermissionsAsync();
-        if (status === 'granted') {
-          const pos = await Location.getCurrentPositionAsync({});
-          latitude = pos.coords.latitude;
-          longitude = pos.coords.longitude;
-        }
-      } catch (locErr) {
-        console.warn('No se pudo obtener ubicación actual', locErr);
-      }
-      const impact = await impactsAPI.create(token, {
-        acceleration_x: telemetry.acceleration_x,
-        acceleration_y: telemetry.acceleration_y,
-        acceleration_z: telemetry.acceleration_z,
-        gyroscope_x: telemetry.gyroscope_x,
-        gyroscope_y: telemetry.gyroscope_y,
-        gyroscope_z: telemetry.gyroscope_z,
-        g_force: telemetry.g_force,
-        latitude,
-        longitude,
-      });
-      if (impact?.alerted_contacts?.length === 0 && telemetry.g_force >= 10) {
-        Alert.alert('No tienes contactos agregados', 'No se pudo notificar a nadie porque no hay contactos de emergencia.');
-      }
-      setAlertResult(impact);
-    } catch (e: any) {
-      Alert.alert('Error', e.message || 'No se pudo enviar la alerta');
-    } finally {
-      setSending(false);
-    }
-  }, [token, telemetry, sending, hasEmergencyContacts, router]);*/
   const triggerEmergencyFlow = useCallback(async () => {
     const currentTelemetry = impactTelemetryRef.current ?? telemetryRef.current;
     if (!token || !currentTelemetry || sending) return;
@@ -234,6 +175,16 @@ export default function DashboardScreen() {
     }
   }, [token, sending, hasEmergencyContacts, router, alertThreshold]);
 
+  useEffect(() => {
+    if (countdown === null) return;
+    if (countdown <= 0) {
+      setCountdown(null);
+      triggerEmergencyFlow();
+      return;
+    }
+    const t = setTimeout(() => setCountdown((v) => (v === null ? null : v - 1)), 1000);
+    return () => clearTimeout(t);
+  }, [countdown, triggerEmergencyFlow]);
 
 
 

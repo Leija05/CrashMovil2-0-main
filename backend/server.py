@@ -3,7 +3,7 @@ from pathlib import Path
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
 
-from fastapi import FastAPI, APIRouter, HTTPException, Request, Depends
+from fastapi import FastAPI, APIRouter, HTTPException, Request, Depends, WebSocket, WebSocketDisconnect
 from fastapi.responses import PlainTextResponse
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -20,7 +20,7 @@ import hashlib
 import asyncio
 from datetime import datetime, timezone, timedelta
 from pydantic import BaseModel, Field
-from typing import List, Optional
+from typing import Any, List, Optional
 
 
 # ─── Config ───
@@ -102,6 +102,8 @@ class ThresholdInput(BaseModel):
     alert_threshold: float = 5.0
     auto_call: Optional[bool] = True
     auto_whatsapp: Optional[bool] = True
+    countdown_seconds: Optional[int] = 8
+    gps_tracking_enabled: Optional[bool] = False
 
 class TelemetryInput(BaseModel):
     acceleration_x: float
@@ -111,6 +113,24 @@ class TelemetryInput(BaseModel):
     gyroscope_y: float
     gyroscope_z: float
     g_force: float
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
+    gps_accuracy_m: Optional[float] = None
+    speed_kmh: Optional[float] = None
+    heading_deg: Optional[float] = None
+    helmet_connected: Optional[bool] = True
+    gps_consent: Optional[bool] = False
+    client_event_id: Optional[str] = None
+    occurred_at: Optional[str] = None
+
+class FalseAlarmInput(BaseModel):
+    alert_id: Optional[str] = None
+    client_event_id: str
+    reason: Optional[str] = "cancelled_from_notification"
+    telemetry: Optional[dict[str, Any]] = None
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
+    occurred_at: Optional[str] = None
 
 # ─── Auth Helpers ───
 
@@ -143,6 +163,38 @@ async def get_current_user(request: Request) -> dict:
         token = token[7:]
     if not token:
         raise HTTPException(status_code=401, detail="Not authenticated")
+    return await get_user_from_token(token)
+
+def classify_severity(g_force: float) -> str:
+    if g_force < 5:
+        return "low"
+    elif g_force < 10:
+        return "medium"
+    elif g_force < 15:
+        return "high"
+    return "critical"
+
+def severity_label(sev: str) -> str:
+    return {"low": "Bajo", "medium": "Medio", "high": "Alto", "critical": "Crítico"}.get(sev, sev)
+
+def serialize_doc(doc: dict | None) -> dict | None:
+    if not doc:
+        return None
+    data = dict(doc)
+    if "_id" in data:
+        data["id"] = str(data.pop("_id"))
+    return data
+
+def normalize_role(role: str | None) -> str:
+    if role == "user":
+        return "driver"
+    return role or "driver"
+
+def ensure_roles(user: dict, allowed: set[str]) -> None:
+    if normalize_role(user.get("role")) not in allowed:
+        raise HTTPException(status_code=403, detail="No tienes permisos para esta operación")
+
+async def get_user_from_token(token: str) -> dict:
     try:
         payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
         if payload.get("type") != "access":
@@ -159,17 +211,28 @@ async def get_current_user(request: Request) -> dict:
     except jwt.InvalidTokenError:
         raise HTTPException(status_code=401, detail="Invalid token")
 
-def classify_severity(g_force: float) -> str:
-    if g_force < 5:
-        return "low"
-    elif g_force < 10:
-        return "medium"
-    elif g_force < 15:
-        return "high"
-    return "critical"
+class MonitoringConnectionManager:
+    def __init__(self) -> None:
+        self.active_connections: set[WebSocket] = set()
 
-def severity_label(sev: str) -> str:
-    return {"low": "Bajo", "medium": "Medio", "high": "Alto", "critical": "Crítico"}.get(sev, sev)
+    async def connect(self, websocket: WebSocket) -> None:
+        await websocket.accept()
+        self.active_connections.add(websocket)
+
+    def disconnect(self, websocket: WebSocket) -> None:
+        self.active_connections.discard(websocket)
+
+    async def broadcast(self, payload: dict[str, Any]) -> None:
+        stale: list[WebSocket] = []
+        for connection in list(self.active_connections):
+            try:
+                await connection.send_json(payload)
+            except Exception:
+                stale.append(connection)
+        for connection in stale:
+            self.disconnect(connection)
+
+monitoring_ws = MonitoringConnectionManager()
 
 # ─── Auth Routes ───
 
@@ -205,6 +268,8 @@ async def register(body: RegisterInput):
         "alert_threshold": 5.0,
         "auto_call": True,
         "auto_whatsapp": True,
+        "countdown_seconds": 8,
+        "gps_tracking_enabled": False,
         "created_at": datetime.now(timezone.utc).isoformat()
     })
     access = create_access_token(user_id, email)
@@ -418,34 +483,129 @@ async def create_impact(body: ImpactInput, user: dict = Depends(get_current_user
 async def get_settings(user: dict = Depends(get_current_user)):
     settings = await db.user_settings.find_one({"user_id": user["id"]}, {"_id": 0})
     if not settings:
-        settings = {"user_id": user["id"], "alert_threshold": 5.0, "auto_call": True, "auto_whatsapp": True}
+        settings = {
+            "user_id": user["id"],
+            "alert_threshold": 5.0,
+            "auto_call": True,
+            "auto_whatsapp": True,
+            "countdown_seconds": 8,
+            "gps_tracking_enabled": False,
+        }
     return settings
 
 @api_router.put("/settings")
 async def update_settings(body: ThresholdInput, user: dict = Depends(get_current_user)):
     update_data = body.dict()
+    update_data["countdown_seconds"] = min(max(update_data.get("countdown_seconds") or 8, 3), 60)
     update_data["updated_at"] = datetime.now(timezone.utc).isoformat()
     await db.user_settings.update_one(
         {"user_id": user["id"]},
-        {"$set": update_data},
+        {"$set": update_data, "$setOnInsert": {"user_id": user["id"], "created_at": update_data["updated_at"]}},
         upsert=True
     )
     settings = await db.user_settings.find_one({"user_id": user["id"]}, {"_id": 0})
     return settings
 
-# ─── Telemetry Route ───
+# ─── Telemetry & Monitoring Routes ───
 
 @api_router.post("/telemetry")
 async def receive_telemetry(body: TelemetryInput, user: dict = Depends(get_current_user)):
+    now = datetime.now(timezone.utc).isoformat()
+    client_event_id = body.client_event_id or str(uuid.uuid4())
+    location_allowed = bool(body.gps_consent and body.helmet_connected and body.latitude is not None and body.longitude is not None)
     doc = {
         "user_id": user["id"],
+        "driver_name": user.get("name", ""),
+        "client_event_id": client_event_id,
         "acceleration": {"x": body.acceleration_x, "y": body.acceleration_y, "z": body.acceleration_z},
         "gyroscope": {"x": body.gyroscope_x, "y": body.gyroscope_y, "z": body.gyroscope_z},
         "g_force": body.g_force,
-        "timestamp": datetime.now(timezone.utc).isoformat()
+        "severity": classify_severity(body.g_force),
+        "helmet_connected": body.helmet_connected is not False,
+        "gps_consent": body.gps_consent is True,
+        "location": {
+            "latitude": body.latitude,
+            "longitude": body.longitude,
+            "accuracy_m": body.gps_accuracy_m,
+            "speed_kmh": body.speed_kmh,
+            "heading_deg": body.heading_deg,
+        } if location_allowed else None,
+        "occurred_at": body.occurred_at or now,
+        "received_at": now,
     }
-    await db.telemetry.insert_one(doc)
-    return {"status": "ok", "g_force": body.g_force, "severity": classify_severity(body.g_force)}
+
+    result = await db.telemetry.update_one(
+        {"user_id": user["id"], "client_event_id": client_event_id},
+        {"$setOnInsert": doc},
+        upsert=True,
+    )
+    inserted = result.upserted_id is not None
+    existing = doc if inserted else await db.telemetry.find_one({"user_id": user["id"], "client_event_id": client_event_id})
+    payload = serialize_doc(existing) or doc
+
+    if inserted:
+        await monitoring_ws.broadcast({"type": "telemetry.update", "data": payload})
+
+    return {
+        "status": "ok",
+        "idempotent": not inserted,
+        "telemetry_id": payload.get("id"),
+        "client_event_id": client_event_id,
+        "g_force": payload.get("g_force"),
+        "severity": payload.get("severity"),
+    }
+
+@api_router.post("/false-alarms")
+async def create_false_alarm(body: FalseAlarmInput, user: dict = Depends(get_current_user)):
+    now = datetime.now(timezone.utc).isoformat()
+    location = {"latitude": body.latitude, "longitude": body.longitude} if body.latitude is not None and body.longitude is not None else None
+    doc = {
+        "user_id": user["id"],
+        "driver_name": user.get("name", ""),
+        "alert_id": body.alert_id,
+        "client_event_id": body.client_event_id,
+        "reason": body.reason or "cancelled_from_notification",
+        "event_type": "false_alarm",
+        "telemetry": body.telemetry or {},
+        "location": location,
+        "occurred_at": body.occurred_at or now,
+        "created_at": now,
+    }
+    result = await db.false_alarms.update_one(
+        {"user_id": user["id"], "client_event_id": body.client_event_id},
+        {"$setOnInsert": doc},
+        upsert=True,
+    )
+    if body.alert_id:
+        await db.impact_events.update_one(
+            {"id": body.alert_id, "user_id": user["id"]},
+            {"$set": {"status": "false_alarm", "cancelled_at": now, "false_alarm_client_event_id": body.client_event_id}},
+        )
+    stored = doc if result.upserted_id is not None else await db.false_alarms.find_one({"user_id": user["id"], "client_event_id": body.client_event_id})
+    payload = serialize_doc(stored) or doc
+    await monitoring_ws.broadcast({"type": "alert.false_alarm", "data": payload})
+    return {"status": "ok", "idempotent": result.upserted_id is None, "false_alarm": payload}
+
+@api_router.get("/monitor/drivers")
+async def get_monitor_drivers(user: dict = Depends(get_current_user)):
+    ensure_roles(user, {"monitor", "admin"})
+    pipeline = [
+        {"$sort": {"received_at": -1}},
+        {"$group": {"_id": "$user_id", "latest": {"$first": "$$ROOT"}}},
+        {"$limit": 250},
+    ]
+    rows = await db.telemetry.aggregate(pipeline).to_list(250)
+    return [serialize_doc(row["latest"]) for row in rows]
+
+@api_router.get("/monitor/drivers/{driver_id}/route")
+async def get_driver_route(driver_id: str, limit: int = 500, user: dict = Depends(get_current_user)):
+    ensure_roles(user, {"monitor", "admin"})
+    limit = min(max(limit, 1), 1000)
+    points = await db.telemetry.find(
+        {"user_id": driver_id, "location": {"$ne": None}},
+        {"_id": 0},
+    ).sort("received_at", -1).to_list(limit)
+    return list(reversed(points))
 
 # ─── AI Diagnosis (Gemini 2.5 Flash) ───
 
@@ -787,6 +947,25 @@ async def whatsapp_webhook_receive(request: Request):
     logger.info(f"WhatsApp webhook event: {json.dumps(payload)}")
     return {"status": "received"}
 
+
+@app.websocket("/api/ws/monitor")
+async def monitor_websocket(websocket: WebSocket):
+    token = websocket.query_params.get("token", "")
+    try:
+        user = await get_user_from_token(token)
+        ensure_roles(user, {"monitor", "admin"})
+    except HTTPException as exc:
+        await websocket.close(code=1008, reason=str(exc.detail))
+        return
+
+    await monitoring_ws.connect(websocket)
+    try:
+        await websocket.send_json({"type": "system.ready", "data": {"connected_at": datetime.now(timezone.utc).isoformat()}})
+        while True:
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        monitoring_ws.disconnect(websocket)
+
 # ─── Startup ───
 
 @app.on_event("startup")
@@ -795,6 +974,10 @@ async def startup():
     await db.emergency_contacts.create_index("user_id")
     await db.impact_events.create_index("user_id")
     await db.telemetry.create_index("user_id")
+    await db.telemetry.create_index([("user_id", 1), ("client_event_id", 1)], unique=True)
+    await db.telemetry.create_index("received_at")
+    await db.false_alarms.create_index("user_id")
+    await db.false_alarms.create_index([("user_id", 1), ("client_event_id", 1)], unique=True)
     await db.user_profiles.create_index("user_id")
     await db.user_settings.create_index("user_id")
     # Seed admin

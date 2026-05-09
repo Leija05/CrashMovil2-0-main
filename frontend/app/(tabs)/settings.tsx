@@ -15,18 +15,20 @@ import { settingsAPI } from '../../src/services/api';
 export default function SettingsScreen() {
   const router = useRouter();
   const { token, logout } = useAuth();
-  const { deviceName, setDeviceName, notifyAlertsConfigChanged } = useAppSettings();
+  const { deviceName, setDeviceName, gpsTrackingEnabled, setGpsTrackingEnabled, notifyAlertsConfigChanged } = useAppSettings();
   const { connected, deviceName: liveDevice, disconnect, nativeAvailable } = useBluetooth();
 
   const [threshold, setThreshold] = useState('5');
   const [autoCall, setAutoCall] = useState(true);
   const [autoWhatsapp, setAutoWhatsapp] = useState(true);
+  const [gpsConsent, setGpsConsent] = useState(gpsTrackingEnabled);
   const [countdownSeconds, setCountdownSeconds] = useState('8');
   const [deviceInput, setDeviceInput] = useState(deviceName);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => { setDeviceInput(deviceName); }, [deviceName]);
+  useEffect(() => { setGpsConsent(gpsTrackingEnabled); }, [gpsTrackingEnabled]);
 
   const fetchData = useCallback(async () => {
     if (!token) return;
@@ -36,9 +38,10 @@ export default function SettingsScreen() {
       setAutoCall(s.auto_call !== false);
       setAutoWhatsapp(s.auto_whatsapp !== false);
       setCountdownSeconds(String(s.countdown_seconds ?? 8));
+      setGpsConsent(s.gps_tracking_enabled ?? gpsTrackingEnabled);
     } catch (e) { console.error(e); }
     finally { setLoading(false); }
-  }, [token]);
+  }, [token, gpsTrackingEnabled]);
 
   useFocusEffect(useCallback(() => { fetchData(); }, [fetchData]));
 
@@ -56,7 +59,8 @@ export default function SettingsScreen() {
     }
     setSaving(true);
     try {
-      await settingsAPI.update(token, { alert_threshold: t, auto_call: autoCall, auto_whatsapp: autoWhatsapp, countdown_seconds: c });
+      await settingsAPI.update(token, { alert_threshold: t, auto_call: autoCall, auto_whatsapp: autoWhatsapp, countdown_seconds: c, gps_tracking_enabled: gpsConsent });
+      await setGpsTrackingEnabled(gpsConsent);
       notifyAlertsConfigChanged();
       Alert.alert('Guardado', 'Configuración de alertas actualizada');
     } catch (e: any) {
@@ -67,6 +71,11 @@ export default function SettingsScreen() {
   const saveDeviceName = async () => {
     await setDeviceName(deviceInput.trim() || 'HC-05');
     Alert.alert('Guardado', 'Nombre del dispositivo actualizado.');
+  };
+
+  const toggleGpsConsent = async (value: boolean) => {
+    setGpsConsent(value);
+    await setGpsTrackingEnabled(value);
   };
 
 
@@ -146,6 +155,30 @@ export default function SettingsScreen() {
                   <Text style={styles.saveInlineBtnText}>GUARDAR</Text>
                 </TouchableOpacity>
               </View>
+            </View>
+          </View>
+
+          {/* ─── Consentimiento GPS ─── */}
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>PRIVACIDAD Y GPS</Text>
+            <View style={styles.toggleRow}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.toggleTitle}>Rastreo GPS con casco conectado</Text>
+                <Text style={styles.toggleHelper}>Solo se adjuntan coordenadas a la telemetría cuando el casco está conectado y autorizas este toggle.</Text>
+              </View>
+              <Switch
+                testID="gps-consent-switch"
+                value={gpsConsent}
+                onValueChange={toggleGpsConsent}
+                trackColor={{ false: '#2A2A34', true: 'rgba(96,165,250,0.45)' }}
+                thumbColor={gpsConsent ? COLORS.info : '#9A9AA8'}
+              />
+            </View>
+            <View style={styles.warnBox}>
+              <Ionicons name="shield-checkmark-outline" size={14} color={COLORS.info} />
+              <Text style={styles.warnBoxText}>
+                La app debe iniciar el servicio en primer plano solo después de conectar el casco; si desactivas este permiso, se envía fuerza G sin ubicación.
+              </Text>
             </View>
           </View>
 
