@@ -34,6 +34,7 @@ export default function DashboardScreen() {
   const impactTelemetryRef = useRef(telemetry);
   const [staleData, setStaleData] = useState(false);
   const impactTriggeredRef = useRef(false);
+  const emergencyInFlightRef = useRef(false);
 
  
   const [countdown, setCountdown] = useState<number | null>(null);
@@ -229,7 +230,7 @@ export default function DashboardScreen() {
   }, [token, telemetry, sending, hasEmergencyContacts, router]);*/
   const triggerEmergencyFlow = useCallback(async () => {
     const currentTelemetry = impactTelemetryRef.current ?? telemetryRef.current;
-    if (!token || !currentTelemetry || sending) return;
+    if (!token || !currentTelemetry || sending || emergencyInFlightRef.current) return;
 
     if (!hasEmergencyContacts) {
       Alert.alert(
@@ -243,6 +244,7 @@ export default function DashboardScreen() {
       return;
     }
 
+    emergencyInFlightRef.current = true;
     setSending(true);
     try {
       let latitude: number | null = null;
@@ -270,7 +272,7 @@ export default function DashboardScreen() {
         longitude,
       });
 
-      if (impact?.alerted_contacts?.length === 0 && currentTelemetry.g_force >= alertThreshold) {
+      if (!impact?.alerts_sent && impact?.alerted_contacts?.length === 0 && impact?.alert_error && currentTelemetry.g_force >= alertThreshold) {
         Alert.alert('No tienes contactos agregados', 'No se pudo notificar a nadie.');
       }
       setAlertResult(impact);
@@ -278,6 +280,7 @@ export default function DashboardScreen() {
       Alert.alert('Error', e.message || 'No se pudo enviar la alerta');
     } finally {
       setSending(false);
+      emergencyInFlightRef.current = false;
     }
   }, [token, sending, hasEmergencyContacts, router, alertThreshold]);
 
@@ -419,7 +422,11 @@ export default function DashboardScreen() {
               <TouchableOpacity style={styles.cancelBtnSoft} onPress={() => setCountdown(null)}>
                 <Text style={styles.cancelSoftText}>Cancelar</Text>
               </TouchableOpacity>
-              <TouchableOpacity style={styles.cancelBtn} onPress={() => { setCountdown(null); impactTriggeredRef.current = true; triggerEmergencyFlow(); }}>
+              <TouchableOpacity
+                style={[styles.cancelBtn, sending && { opacity: 0.6 }]}
+                disabled={sending}
+                onPress={() => { setCountdown(null); impactTriggeredRef.current = true; triggerEmergencyFlow(); }}
+              >
                 <Text style={styles.cancelText}>Enviar ahora</Text>
               </TouchableOpacity>
             </View>
