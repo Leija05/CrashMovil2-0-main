@@ -1,0 +1,21 @@
+services:
+  - type: web
+    name: crashmovil-backend
+    env: python
+    plan: free
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn server:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: DB_NAME
+        value: crash_database
+      - key: JWT_ALGORITHM
+        value: HS256
+      - key: JWT_EXPIRE_MINUTES
+        value: "60"
+      - key: ALLOWED_ORIGINS
+        value: "*"
+      - key: MONGO_URL
+        sync: false
+      - key: JWT_SECRET
+        sync: false
