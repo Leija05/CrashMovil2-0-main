@@ -1,0 +1,59 @@
+services:
+  - type: web
+    name: crashmovil-backend
+    env: python
+    plan: free
+    rootDir: backend
+    buildCommand: python -m pip install --upgrade pip setuptools wheel && pip install -r requirements.txt
+    startCommand: uvicorn server:app --host 0.0.0.0 --port $PORT
+    autoDeploy: true
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      # ─── Core ───
+      - key: DB_NAME
+        value: crash_database
+      - key: JWT_ALGORITHM
+        value: HS256
+      - key: JWT_EXPIRE_MINUTES
+        value: "10080"
+      - key: ALLOWED_ORIGINS
+        value: "*"
+      - key: MONGO_URL
+        sync: false
+      - key: JWT_SECRET
+        sync: false
+
+      # ─── AI (opcionales) ───
+      - key: GOOGLE_API_KEY
+        sync: false
+      - key: GEMINI_MODEL
+        value: gemini-1.5-flash
+      - key: GROQ_API_KEY
+        sync: false
+      - key: COHERE_API_KEY
+        sync: false
+
+      # ─── WhatsApp Cloud API ───
+      - key: WHATSAPP_ACCESS_TOKEN
+        sync: false
+      - key: WHATSAPP_PHONE_NUMBER_ID
+        sync: false
+      - key: WHATSAPP_API_VERSION
+        value: v25.0
+      - key: WHATSAPP_WEBHOOK_VERIFY_TOKEN
+        sync: false
+      - key: WHATSAPP_APP_SECRET
+        sync: false
+      - key: WHATSAPP_COLLISION_TEMPLATE_NAME
+        value: crash_collision_diagnosis
+      - key: WHATSAPP_TEMPLATE_LANGUAGE
+        value: es_MX
+      - key: WHATSAPP_TEMPLATE_FALLBACK_ON_24H
+        value: "true"
+
+      # ─── Admin seed ───
+      - key: ADMIN_EMAIL
+        value: admin@crash.com
+      - key: ADMIN_PASSWORD
+        sync: false
