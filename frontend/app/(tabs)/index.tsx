@@ -10,7 +10,7 @@ import { COLORS, RADIUS, SPACING, severityColor, severityLabel } from '../../src
 import { useAuth } from '../../src/context/AuthContext';
 import { useBluetooth } from '../../src/context/BluetoothContext';
 import { useAppSettings } from '../../src/context/AppSettingsContext';
-import { contactsAPI, impactsAPI, settingsAPI } from '../../src/services/api';
+import { contactsAPI, impactsAPI, settingsAPI, telemetryAPI } from '../../src/services/api';
 
 const MAX_G_RING = 12;
 const SEGMENTS = 40;
@@ -32,6 +32,8 @@ export default function DashboardScreen() {
 
   const telemetryRef = useRef(telemetry); 
   const impactTelemetryRef = useRef(telemetry);
+  const batteryLevelRef = useRef(batteryLevel);
+  const [lastGpsPoint, setLastGpsPoint] = useState<{ latitude: number; longitude: number; speed: number | null } | null>(null);
   const [staleData, setStaleData] = useState(false);
   const impactTriggeredRef = useRef(false);
 
@@ -44,13 +46,99 @@ export default function DashboardScreen() {
   const [hasEmergencyContacts, setHasEmergencyContacts] = useState(true);
 
   useEffect(() => {
+    batteryLevelRef.current = batteryLevel;
+  }, [batteryLevel]);
+
+  useEffect(() => {
     if (!telemetry) return;
-    if (countdown !== null) return;
     telemetryRef.current = telemetry;
     lastDataRef.current = Date.now();
     setStaleData(prev => (prev ? false : prev));
     setPeakG(prev => (telemetry.g_force > prev ? telemetry.g_force : prev));
-  }, [telemetry, countdown]);
+  }, [telemetry]);
+
+  useEffect(() => {
+    if (!token || !connected) return;
+
+    let cancelled = false;
+    let interval: ReturnType<typeof setInterval> | null = null;
+    let locationGranted = false;
+
+    const readGps = async () => {
+      if (!locationGranted) {
+        return { latitude: null, longitude: null, speed: null };
+      }
+
+      const position = await Location.getCurrentPositionAsync({
+        accuracy: Location.Accuracy.Balanced,
+      });
+      const speed = typeof position.coords.speed === 'number' && position.coords.speed >= 0
+        ? position.coords.speed * 3.6
+        : null;
+
+      return {
+        latitude: position.coords.latitude,
+        longitude: position.coords.longitude,
+        speed,
+      };
+    };
+
+    const sendLiveTelemetry = async () => {
+      const currentTelemetry = telemetryRef.current;
+      if (cancelled || !currentTelemetry) return;
+
+      try {
+        const gps = await readGps();
+        if (cancelled) return;
+
+        if (gps.latitude !== null && gps.longitude !== null) {
+          setLastGpsPoint({
+            latitude: gps.latitude,
+            longitude: gps.longitude,
+            speed: gps.speed,
+          });
+        }
+
+        await telemetryAPI.send(token, {
+          acceleration_x: currentTelemetry.acceleration_x,
+          acceleration_y: currentTelemetry.acceleration_y,
+          acceleration_z: currentTelemetry.acceleration_z,
+          gyroscope_x: currentTelemetry.gyroscope_x,
+          gyroscope_y: currentTelemetry.gyroscope_y,
+          gyroscope_z: currentTelemetry.gyroscope_z,
+          g_force: currentTelemetry.g_force,
+          latitude: gps.latitude,
+          longitude: gps.longitude,
+          speed: gps.speed,
+          battery: currentTelemetry.battery ?? batteryLevelRef.current ?? null,
+          helmet_connected: connected,
+        });
+      } catch (e) {
+        console.warn('No se pudo enviar telemetría live', e);
+      }
+    };
+
+    const startTelemetryLoop = async () => {
+      try {
+        const { status } = await Location.requestForegroundPermissionsAsync();
+        locationGranted = status === 'granted';
+      } catch (e) {
+        console.warn('No se pudo solicitar permiso de ubicación', e);
+      }
+
+      await sendLiveTelemetry();
+      if (!cancelled) {
+        interval = setInterval(sendLiveTelemetry, 2000);
+      }
+    };
+
+    startTelemetryLoop();
+
+    return () => {
+      cancelled = true;
+      if (interval) clearInterval(interval);
+    };
+  }, [token, connected]);
 
 
   useEffect(() => {
@@ -120,17 +208,6 @@ export default function DashboardScreen() {
       impactTriggeredRef.current = false;
     }
   }, [liveData, gForce, alertThreshold]);
-
-  useEffect(() => {
-    if (countdown === null) return;
-    if (countdown <= 0) {
-      setCountdown(null);
-      triggerEmergencyFlow();
-      return;
-    }
-    const t = setTimeout(() => setCountdown((v) => (v === null ? null : v - 1)), 1000);
-    return () => clearTimeout(t);
-  }, [countdown, triggerEmergencyFlow]);
 
   /*const triggerEmergencyFlow = useCallback(async () => {
     if (!token || !telemetry || sending) return;
@@ -234,6 +311,18 @@ export default function DashboardScreen() {
     }
   }, [token, sending, hasEmergencyContacts, router, alertThreshold]);
 
+  useEffect(() => {
+    if (countdown === null) return;
+    if (countdown <= 0) {
+      setCountdown(null);
+      triggerEmergencyFlow();
+      return;
+    }
+    const t = setTimeout(() => setCountdown((v) => (v === null ? null : v - 1)), 1000);
+    return () => clearTimeout(t);
+  }, [countdown, triggerEmergencyFlow]);
+
+
 
 
 
@@ -295,7 +384,11 @@ export default function DashboardScreen() {
           <CoordItem label="Y" value={telemetryForDisplay?.acceleration_y} live={liveData} />
           <CoordItem label="Z" value={telemetryForDisplay?.acceleration_z} live={liveData} />
         </View>
-        <Text style={styles.coordsGeo}>Lat: 19.4326 · Lon: -99.1332</Text>
+        <Text style={styles.coordsGeo}>
+          {lastGpsPoint
+            ? `Lat: ${lastGpsPoint.latitude.toFixed(5)} · Lon: ${lastGpsPoint.longitude.toFixed(5)}${lastGpsPoint.speed !== null ? ` · ${lastGpsPoint.speed.toFixed(1)} km/h` : ''}`
+            : 'GPS pendiente de telemetría live'}
+        </Text>
       </View>
 
         <View style={styles.sectionHead}>

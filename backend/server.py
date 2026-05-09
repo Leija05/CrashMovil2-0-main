@@ -111,6 +111,11 @@ class TelemetryInput(BaseModel):
     gyroscope_y: float
     gyroscope_z: float
     g_force: float
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
+    speed: Optional[float] = None
+    battery: Optional[int] = None
+    helmet_connected: Optional[bool] = None
 
 # ─── Auth Helpers ───
 
@@ -442,6 +447,11 @@ async def receive_telemetry(body: TelemetryInput, user: dict = Depends(get_curre
         "acceleration": {"x": body.acceleration_x, "y": body.acceleration_y, "z": body.acceleration_z},
         "gyroscope": {"x": body.gyroscope_x, "y": body.gyroscope_y, "z": body.gyroscope_z},
         "g_force": body.g_force,
+        "latitude": body.latitude,
+        "longitude": body.longitude,
+        "speed": body.speed,
+        "battery": body.battery,
+        "helmet_connected": body.helmet_connected,
         "timestamp": datetime.now(timezone.utc).isoformat()
     }
     await db.telemetry.insert_one(doc)
