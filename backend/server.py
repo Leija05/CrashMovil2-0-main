@@ -8,6 +8,7 @@ from fastapi.responses import PlainTextResponse
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 from bson import ObjectId
+from pymongo.errors import DuplicateKeyError
 import os
 import logging
 import bcrypt
@@ -116,6 +117,7 @@ class TelemetryInput(BaseModel):
     longitude: Optional[float] = None
     gps_accuracy_m: Optional[float] = None
     helmet_connected: Optional[bool] = None
+    client_event_id: Optional[str] = None
 
 # ─── Auth Helpers ───
 
@@ -453,8 +455,10 @@ async def receive_telemetry(body: TelemetryInput, user: dict = Depends(get_curre
             "gps_accuracy_m": body.gps_accuracy_m
         }
 
+    client_event_id = body.client_event_id or f"telemetry-{uuid.uuid4()}"
     doc = {
         "user_id": user["id"],
+        "client_event_id": client_event_id,
         "acceleration": {"x": body.acceleration_x, "y": body.acceleration_y, "z": body.acceleration_z},
         "gyroscope": {"x": body.gyroscope_x, "y": body.gyroscope_y, "z": body.gyroscope_z},
         "g_force": body.g_force,
@@ -462,7 +466,15 @@ async def receive_telemetry(body: TelemetryInput, user: dict = Depends(get_curre
         "location": location,
         "timestamp": datetime.now(timezone.utc).isoformat()
     }
-    await db.telemetry.insert_one(doc)
+    try:
+        await db.telemetry.insert_one(doc)
+    except DuplicateKeyError:
+        return {
+            "status": "duplicate_ignored",
+            "g_force": body.g_force,
+            "severity": classify_severity(body.g_force),
+            "location_tracking_enabled": track_location
+        }
     if location:
         await db.user_live_locations.update_one(
             {"user_id": user["id"]},

@@ -145,6 +145,7 @@ export default function DashboardScreen() {
           longitude,
           gps_accuracy_m: gpsAccuracyM,
           helmet_connected: connected,
+          client_event_id: `telemetry-${now}`,
         });
       } catch (e) {
         console.warn('No se pudo enviar telemetría en tiempo real', e);
