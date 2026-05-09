@@ -114,7 +114,7 @@ export default function DashboardScreen() {
     const pushRealtimeTelemetry = async () => {
       if (!token || !connected || !telemetry || staleData) return;
       const now = Date.now();
-      if (now - lastTelemetrySentAtRef.current < 3000) return;
+      if (now - lastTelemetrySentAtRef.current < 10000) return;
       lastTelemetrySentAtRef.current = now;
       let latitude: number | undefined;
       let longitude: number | undefined;
