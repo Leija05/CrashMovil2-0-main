@@ -31,6 +31,7 @@ export default function DashboardScreen() {
   const lastDataRef = useRef<number>(Date.now());
 
   const telemetryRef = useRef(telemetry); 
+  const impactTelemetryRef = useRef(telemetry);
   const [staleData, setStaleData] = useState(false);
   const impactTriggeredRef = useRef(false);
 
@@ -42,13 +43,14 @@ export default function DashboardScreen() {
   const [alertThreshold, setAlertThreshold] = useState(5);
   const [hasEmergencyContacts, setHasEmergencyContacts] = useState(true);
 
-useEffect(() => {
+  useEffect(() => {
     if (!telemetry) return;
+    if (countdown !== null) return;
     telemetryRef.current = telemetry;
     lastDataRef.current = Date.now();
     setStaleData(prev => (prev ? false : prev));
     setPeakG(prev => (telemetry.g_force > prev ? telemetry.g_force : prev));
-  }, [telemetry]);
+  }, [telemetry, countdown]);
 
 
   useEffect(() => {
@@ -98,18 +100,20 @@ useEffect(() => {
   }, []);
 
 
-  const gForce = telemetry?.g_force ?? 0;
+  const telemetryForDisplay = countdown !== null ? impactTelemetryRef.current : telemetry;
+  const gForce = telemetryForDisplay?.g_force ?? 0;
   const sevColor = severityColor(gForce);
   const sevLabel = severityLabel(gForce);
-  const liveData = connected && !staleData && !!telemetry;
+  const liveData = connected && !staleData && !!telemetryForDisplay;
   const highImpact = liveData && gForce >= alertThreshold;
 
   useEffect(() => {
     if (highImpact && countdown === null && !sending && !impactTriggeredRef.current) {
       impactTriggeredRef.current = true;
+      impactTelemetryRef.current = telemetry ?? telemetryRef.current;
       setCountdown(countdownSeconds);
     }
-  }, [highImpact, countdown, sending, countdownSeconds]);
+  }, [highImpact, countdown, sending, countdownSeconds, telemetry]);
 
   useEffect(() => {
     if (!liveData || gForce < alertThreshold) {
@@ -177,7 +181,7 @@ useEffect(() => {
     }
   }, [token, telemetry, sending, hasEmergencyContacts, router]);*/
   const triggerEmergencyFlow = useCallback(async () => {
-    const currentTelemetry = telemetryRef.current;
+    const currentTelemetry = impactTelemetryRef.current ?? telemetryRef.current;
     if (!token || !currentTelemetry || sending) return;
 
     if (!hasEmergencyContacts) {
@@ -287,9 +291,9 @@ useEffect(() => {
         <View style={styles.coordsCard}>
           <Text style={styles.coordsTitle}>COORDENADAS / ACELERACIÓN (m/s²)</Text>
         <View style={styles.coordsGrid}>
-          <CoordItem label="X" value={telemetry?.acceleration_x} live={liveData} />
-          <CoordItem label="Y" value={telemetry?.acceleration_y} live={liveData} />
-          <CoordItem label="Z" value={telemetry?.acceleration_z} live={liveData} />
+          <CoordItem label="X" value={telemetryForDisplay?.acceleration_x} live={liveData} />
+          <CoordItem label="Y" value={telemetryForDisplay?.acceleration_y} live={liveData} />
+          <CoordItem label="Z" value={telemetryForDisplay?.acceleration_z} live={liveData} />
         </View>
         <Text style={styles.coordsGeo}>Lat: 19.4326 · Lon: -99.1332</Text>
       </View>
@@ -303,10 +307,10 @@ useEffect(() => {
         </View>
 
         <View style={styles.grid}>
-          <MetricCard label="GIRO X" value={telemetry?.gyroscope_x} unit="rad/s" color={COLORS.warning} live={liveData} />
-          <MetricCard label="GIRO Y" value={telemetry?.gyroscope_y} unit="rad/s" color={COLORS.warning} live={liveData} />
-          <MetricCard label="GIRO Z" value={telemetry?.gyroscope_z} unit="rad/s" color="#FB923C" live={liveData} />
-          <MetricCard label="FUERZA G" value={telemetry?.g_force} unit="g" color={COLORS.accent} live={liveData} />
+          <MetricCard label="GIRO X" value={telemetryForDisplay?.gyroscope_x} unit="rad/s" color={COLORS.warning} live={liveData} />
+          <MetricCard label="GIRO Y" value={telemetryForDisplay?.gyroscope_y} unit="rad/s" color={COLORS.warning} live={liveData} />
+          <MetricCard label="GIRO Z" value={telemetryForDisplay?.gyroscope_z} unit="rad/s" color="#FB923C" live={liveData} />
+          <MetricCard label="FUERZA G" value={telemetryForDisplay?.g_force} unit="g" color={COLORS.accent} live={liveData} />
         </View>
 
         {connected ? (

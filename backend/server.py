@@ -51,6 +51,11 @@ api_router = APIRouter(prefix="/api")
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
+# Evita ráfagas de alertas duplicadas por múltiples POST /impacts casi simultáneos.
+impact_alert_locks: dict[str, asyncio.Lock] = {}
+last_alert_sent_at: dict[str, datetime] = {}
+ALERT_COOLDOWN_SECONDS = 25
+
 # ─── Pydantic Models ───
 
 class RegisterInput(BaseModel):
@@ -280,6 +285,7 @@ async def get_contacts(user: dict = Depends(get_current_user)):
 
 @api_router.post("/contacts")
 async def add_contact(body: ContactInput, user: dict = Depends(get_current_user)):
+    whatsapp_validation = await validate_whatsapp_contact(body.phone.strip())
     contact_doc = {
         "id": str(uuid.uuid4()),
         "user_id": user["id"],
@@ -288,7 +294,8 @@ async def add_contact(body: ContactInput, user: dict = Depends(get_current_user)
         "relationship": body.relationship.strip() if body.relationship else "",
         "verified": True,
         "verified_at": datetime.now(timezone.utc).isoformat(),
-        "created_at": datetime.now(timezone.utc).isoformat()
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "whatsapp_validation": whatsapp_validation,
     }
     await db.emergency_contacts.insert_one(contact_doc)
     contact_doc.pop("_id", None)
@@ -363,52 +370,44 @@ async def create_impact(body: ImpactInput, user: dict = Depends(get_current_user
         impact_doc.pop("_id", None)
         return impact_doc
 
-    # Deduplicate fast-repeated impacts so a single collision only triggers one WhatsApp blast.
-    dedupe_since = (datetime.now(timezone.utc) - timedelta(seconds=20)).isoformat()
-    recent_alerted_impacts = await db.impact_events.find(
-        {
-            "user_id": user["id"],
-            "alerts_sent": True,
-            "created_at": {"$gte": dedupe_since},
-        },
-        {"_id": 0, "id": 1, "g_force": 1, "created_at": 1},
-    ).to_list(10)
-    for recent in recent_alerted_impacts:
+    user_id = user["id"]
+    lock = impact_alert_locks.setdefault(user_id, asyncio.Lock())
+    async with lock:
+        last_sent = last_alert_sent_at.get(user_id)
+        now = datetime.now(timezone.utc)
+        if last_sent and (now - last_sent).total_seconds() < ALERT_COOLDOWN_SECONDS:
+            msg = f"Alerta duplicada suprimida: ya se notificó un impacto en los últimos {ALERT_COOLDOWN_SECONDS} segundos."
+            # Eliminamos el registro duplicado para no ensuciar el historial con el mismo evento.
+            await db.impact_events.delete_one({"id": impact_id, "user_id": user_id})
+            impact_doc["alerts_sent"] = True
+            impact_doc["alerted_contacts"] = []
+            impact_doc["alert_error"] = None
+            impact_doc["deduplicated"] = True
+            impact_doc["deduplication_reason"] = msg
+            impact_doc.pop("_id", None)
+            return impact_doc
+
         try:
-            if abs(float(recent.get("g_force", 0)) - float(body.g_force)) <= 0.6:
-                msg = "Alerta duplicada suprimida: ya se notificó un impacto equivalente en los últimos 20 segundos."
-                logger.info(msg)
-                await db.impact_events.update_one(
-                    {"id": impact_id},
-                    {"$set": {"alerts_sent": False, "alerted_contacts": [], "alert_error": msg}},
-                )
+            alerted_contacts = await send_emergency_alerts(user, impact_doc, profile, diagnosis)
+            if alerted_contacts:
+                last_alert_sent_at[user_id] = now
+                await db.impact_events.update_one({"id": impact_id}, {"$set": {"alerts_sent": True, "alerted_contacts": alerted_contacts}})
+                impact_doc["alerts_sent"] = True
+                impact_doc["alerted_contacts"] = alerted_contacts
+            else:
+                msg = "No hubo contactos notificados en esta ejecución."
+                await db.impact_events.update_one({"id": impact_id}, {"$set": {"alerts_sent": False, "alerted_contacts": [], "alert_error": None, "delivery_note": msg}})
                 impact_doc["alerts_sent"] = False
                 impact_doc["alerted_contacts"] = []
-                impact_doc["alert_error"] = msg
-                impact_doc.pop("_id", None)
-                return impact_doc
-        except Exception:
-            continue
-
-    try:
-        alerted_contacts = await send_emergency_alerts(user, impact_doc, profile, diagnosis)
-        if alerted_contacts:
-            await db.impact_events.update_one({"id": impact_id}, {"$set": {"alerts_sent": True, "alerted_contacts": alerted_contacts}})
-            impact_doc["alerts_sent"] = True
-            impact_doc["alerted_contacts"] = alerted_contacts
-        else:
-            msg = "No se pudo enviar WhatsApp a ningún contacto. Revisa configuración/API de Meta."
+                impact_doc["alert_error"] = None
+                impact_doc["delivery_note"] = msg
+        except Exception as e:
+            msg = f"Error al enviar alertas WhatsApp: {e}"
+            logger.error(f"Alert sending failed: {e}")
             await db.impact_events.update_one({"id": impact_id}, {"$set": {"alerts_sent": False, "alerted_contacts": [], "alert_error": msg}})
             impact_doc["alerts_sent"] = False
             impact_doc["alerted_contacts"] = []
             impact_doc["alert_error"] = msg
-    except Exception as e:
-        msg = f"Error al enviar alertas WhatsApp: {e}"
-        logger.error(f"Alert sending failed: {e}")
-        await db.impact_events.update_one({"id": impact_id}, {"$set": {"alerts_sent": False, "alerted_contacts": [], "alert_error": msg}})
-        impact_doc["alerts_sent"] = False
-        impact_doc["alerted_contacts"] = []
-        impact_doc["alert_error"] = msg
 
     impact_doc.pop("_id", None)
     return impact_doc
@@ -638,6 +637,44 @@ async def send_whatsapp_message(phone: str, message: str, template_params: Optio
             raise HTTPException(status_code=resp.status_code, detail=f"WhatsApp API error: {resp.text}")
         return resp.json()
 
+async def validate_whatsapp_contact(phone: str) -> dict:
+    """
+    Valida si un teléfono existe en WhatsApp usando el endpoint /contacts.
+    Nota: en modo desarrollo de Meta, esto NO registra automáticamente el número
+    en la lista permitida; solo valida formato/existencia en WhatsApp.
+    """
+    url = f"https://graph.facebook.com/{WHATSAPP_API_VERSION}/{WHATSAPP_PHONE_NUMBER_ID}/contacts"
+    headers = {
+        "Authorization": f"Bearer {WHATSAPP_ACCESS_TOKEN}",
+        "Content-Type": "application/json",
+    }
+    payload = {"blocking": "wait", "contacts": [phone], "force_check": True}
+    async with httpx.AsyncClient() as http_client:
+        resp = await http_client.post(url, json=payload, headers=headers)
+        if resp.status_code >= 400:
+            return {
+                "checked": False,
+                "is_whatsapp_user": False,
+                "can_receive_in_dev_mode": False,
+                "reason": f"No se pudo validar en WhatsApp API: {resp.text}",
+            }
+        data = resp.json() if resp.text else {}
+        first = ((data.get("contacts") or [{}])[0]) if isinstance(data, dict) else {}
+        status = first.get("status")
+        is_valid = status == "valid"
+        return {
+            "checked": True,
+            "is_whatsapp_user": is_valid,
+            # Importante: validación != aprobado en lista de recipients de modo desarrollo.
+            "can_receive_in_dev_mode": False,
+            "status": status or "unknown",
+            "wa_id": first.get("wa_id"),
+            "reason": (
+                "Número válido en WhatsApp, pero en modo desarrollo debes agregarlo manualmente en "
+                "Meta Dashboard > WhatsApp > API Setup > Add recipient phone number."
+            ),
+        }
+
 def build_diagnosis_summary(diagnosis: dict | None) -> str:
     if not diagnosis:
         return "Sin diagnóstico IA disponible."
@@ -682,6 +719,16 @@ async def send_emergency_alerts(user: dict, impact: dict, profile: dict | None, 
         f"Por favor, contacte a {user.get('name', 'el usuario')} inmediatamente."
     )
 
+    # Evita múltiples envíos al mismo número si hay contactos duplicados.
+    unique_contacts = []
+    seen_phones = set()
+    for contact in contacts:
+        phone = (contact.get("phone") or "").strip()
+        if not phone or phone in seen_phones:
+            continue
+        seen_phones.add(phone)
+        unique_contacts.append(contact)
+
     alerted_contacts = []
     template_values = [
         impact.get("severity_label", "N/A"),
@@ -689,7 +736,7 @@ async def send_emergency_alerts(user: dict, impact: dict, profile: dict | None, 
         (diagnosis.get("emergency_recommendations") or ["Contactar servicios de emergencia"])[0] if diagnosis else "Contactar servicios de emergencia",
         f"https://maps.google.com/?q={impact['location']['latitude']},{impact['location']['longitude']}" if impact.get("location") and impact["location"].get("latitude") else "Ubicación no disponible"
     ]
-    for contact in contacts:
+    for contact in unique_contacts:
         try:
             await send_whatsapp_message(contact["phone"], message, template_params=template_values)
             logger.info(f"Alert sent to {contact['name']} ({contact['phone']})")
