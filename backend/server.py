@@ -102,6 +102,7 @@ class ThresholdInput(BaseModel):
     alert_threshold: float = 5.0
     auto_call: Optional[bool] = True
     auto_whatsapp: Optional[bool] = True
+    location_tracking_enabled: Optional[bool] = True
 
 class TelemetryInput(BaseModel):
     acceleration_x: float
@@ -111,6 +112,10 @@ class TelemetryInput(BaseModel):
     gyroscope_y: float
     gyroscope_z: float
     g_force: float
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
+    gps_accuracy_m: Optional[float] = None
+    helmet_connected: Optional[bool] = None
 
 # ─── Auth Helpers ───
 
@@ -205,6 +210,7 @@ async def register(body: RegisterInput):
         "alert_threshold": 5.0,
         "auto_call": True,
         "auto_whatsapp": True,
+        "location_tracking_enabled": True,
         "created_at": datetime.now(timezone.utc).isoformat()
     })
     access = create_access_token(user_id, email)
@@ -418,7 +424,7 @@ async def create_impact(body: ImpactInput, user: dict = Depends(get_current_user
 async def get_settings(user: dict = Depends(get_current_user)):
     settings = await db.user_settings.find_one({"user_id": user["id"]}, {"_id": 0})
     if not settings:
-        settings = {"user_id": user["id"], "alert_threshold": 5.0, "auto_call": True, "auto_whatsapp": True}
+        settings = {"user_id": user["id"], "alert_threshold": 5.0, "auto_call": True, "auto_whatsapp": True, "location_tracking_enabled": True}
     return settings
 
 @api_router.put("/settings")
@@ -437,15 +443,55 @@ async def update_settings(body: ThresholdInput, user: dict = Depends(get_current
 
 @api_router.post("/telemetry")
 async def receive_telemetry(body: TelemetryInput, user: dict = Depends(get_current_user)):
+    settings = await db.user_settings.find_one({"user_id": user["id"]}, {"_id": 0}) or {}
+    track_location = settings.get("location_tracking_enabled", True)
+    location = None
+    if track_location and body.latitude is not None and body.longitude is not None:
+        location = {
+            "latitude": body.latitude,
+            "longitude": body.longitude,
+            "gps_accuracy_m": body.gps_accuracy_m
+        }
+
     doc = {
         "user_id": user["id"],
         "acceleration": {"x": body.acceleration_x, "y": body.acceleration_y, "z": body.acceleration_z},
         "gyroscope": {"x": body.gyroscope_x, "y": body.gyroscope_y, "z": body.gyroscope_z},
         "g_force": body.g_force,
+        "helmet_connected": body.helmet_connected,
+        "location": location,
         "timestamp": datetime.now(timezone.utc).isoformat()
     }
     await db.telemetry.insert_one(doc)
-    return {"status": "ok", "g_force": body.g_force, "severity": classify_severity(body.g_force)}
+    if location:
+        await db.user_live_locations.update_one(
+            {"user_id": user["id"]},
+            {"$set": {
+                "user_id": user["id"],
+                "location": location,
+                "helmet_connected": body.helmet_connected,
+                "g_force": body.g_force,
+                "timestamp": doc["timestamp"]
+            }},
+            upsert=True
+        )
+    return {"status": "ok", "g_force": body.g_force, "severity": classify_severity(body.g_force), "location_tracking_enabled": track_location}
+
+@api_router.get("/tracking/live")
+async def get_live_tracking(user: dict = Depends(get_current_user)):
+    latest = await db.user_live_locations.find_one({"user_id": user["id"]}, {"_id": 0})
+    if latest:
+        return latest
+    telemetry = await db.telemetry.find_one({"user_id": user["id"], "location": {"$ne": None}}, {"_id": 0}, sort=[("timestamp", -1)])
+    if telemetry:
+        return {
+            "user_id": user["id"],
+            "location": telemetry.get("location"),
+            "helmet_connected": telemetry.get("helmet_connected"),
+            "g_force": telemetry.get("g_force"),
+            "timestamp": telemetry.get("timestamp")
+        }
+    return {"user_id": user["id"], "location": None, "helmet_connected": False, "g_force": None, "timestamp": None}
 
 # ─── AI Diagnosis (Gemini 2.5 Flash) ───
 
@@ -795,6 +841,7 @@ async def startup():
     await db.emergency_contacts.create_index("user_id")
     await db.impact_events.create_index("user_id")
     await db.telemetry.create_index("user_id")
+    await db.user_live_locations.create_index("user_id", unique=True)
     await db.user_profiles.create_index("user_id")
     await db.user_settings.create_index("user_id")
     # Seed admin

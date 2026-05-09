@@ -22,6 +22,7 @@ export default function SettingsScreen() {
   const [autoCall, setAutoCall] = useState(true);
   const [autoWhatsapp, setAutoWhatsapp] = useState(true);
   const [countdownSeconds, setCountdownSeconds] = useState('8');
+  const [locationTrackingEnabled, setLocationTrackingEnabled] = useState(true);
   const [deviceInput, setDeviceInput] = useState(deviceName);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -36,6 +37,7 @@ export default function SettingsScreen() {
       setAutoCall(s.auto_call !== false);
       setAutoWhatsapp(s.auto_whatsapp !== false);
       setCountdownSeconds(String(s.countdown_seconds ?? 8));
+      setLocationTrackingEnabled(s.location_tracking_enabled !== false);
     } catch (e) { console.error(e); }
     finally { setLoading(false); }
   }, [token]);
@@ -56,7 +58,7 @@ export default function SettingsScreen() {
     }
     setSaving(true);
     try {
-      await settingsAPI.update(token, { alert_threshold: t, auto_call: autoCall, auto_whatsapp: autoWhatsapp, countdown_seconds: c });
+      await settingsAPI.update(token, { alert_threshold: t, auto_call: autoCall, auto_whatsapp: autoWhatsapp, countdown_seconds: c, location_tracking_enabled: locationTrackingEnabled });
       notifyAlertsConfigChanged();
       Alert.alert('Guardado', 'Configuración de alertas actualizada');
     } catch (e: any) {
@@ -202,6 +204,19 @@ export default function SettingsScreen() {
               </View>
             </View>
 
+            <View style={styles.toggleRow}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1 }}>
+                <Ionicons name="location-outline" size={20} color={COLORS.info} />
+                <Text style={styles.toggleLabel}>Rastreo de ubicación en tiempo real</Text>
+              </View>
+              <Switch
+                testID="location-tracking-switch"
+                value={locationTrackingEnabled}
+                onValueChange={setLocationTrackingEnabled}
+                trackColor={{ false: '#2A2A34', true: 'rgba(96,165,250,0.45)' }}
+                thumbColor={locationTrackingEnabled ? COLORS.info : '#9A9AA8'}
+              />
+            </View>
             <View style={styles.toggleRow}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1 }}>
                 <Ionicons name="call-outline" size={20} color={COLORS.text} />
