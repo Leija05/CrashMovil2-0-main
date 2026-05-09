@@ -8,6 +8,7 @@ from fastapi.responses import PlainTextResponse
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 from bson import ObjectId
+from pymongo.errors import DuplicateKeyError
 import os
 import logging
 import bcrypt
@@ -19,6 +20,7 @@ import hmac
 import hashlib
 import asyncio
 from datetime import datetime, timezone, timedelta
+from math import radians, sin, cos, sqrt, atan2
 from pydantic import BaseModel, Field
 from typing import List, Optional
 
@@ -102,6 +104,7 @@ class ThresholdInput(BaseModel):
     alert_threshold: float = 5.0
     auto_call: Optional[bool] = True
     auto_whatsapp: Optional[bool] = True
+    location_tracking_enabled: Optional[bool] = True
 
 class TelemetryInput(BaseModel):
     acceleration_x: float
@@ -111,6 +114,11 @@ class TelemetryInput(BaseModel):
     gyroscope_y: float
     gyroscope_z: float
     g_force: float
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
+    gps_accuracy_m: Optional[float] = None
+    helmet_connected: Optional[bool] = None
+    client_event_id: Optional[str] = None
 
 # ─── Auth Helpers ───
 
@@ -205,6 +213,7 @@ async def register(body: RegisterInput):
         "alert_threshold": 5.0,
         "auto_call": True,
         "auto_whatsapp": True,
+        "location_tracking_enabled": True,
         "created_at": datetime.now(timezone.utc).isoformat()
     })
     access = create_access_token(user_id, email)
@@ -418,7 +427,7 @@ async def create_impact(body: ImpactInput, user: dict = Depends(get_current_user
 async def get_settings(user: dict = Depends(get_current_user)):
     settings = await db.user_settings.find_one({"user_id": user["id"]}, {"_id": 0})
     if not settings:
-        settings = {"user_id": user["id"], "alert_threshold": 5.0, "auto_call": True, "auto_whatsapp": True}
+        settings = {"user_id": user["id"], "alert_threshold": 5.0, "auto_call": True, "auto_whatsapp": True, "location_tracking_enabled": True}
     return settings
 
 @api_router.put("/settings")
@@ -437,15 +446,104 @@ async def update_settings(body: ThresholdInput, user: dict = Depends(get_current
 
 @api_router.post("/telemetry")
 async def receive_telemetry(body: TelemetryInput, user: dict = Depends(get_current_user)):
+    settings = await db.user_settings.find_one({"user_id": user["id"]}, {"_id": 0}) or {}
+    track_location = settings.get("location_tracking_enabled", True)
+    location = None
+    if track_location and body.latitude is not None and body.longitude is not None:
+        location = {
+            "latitude": body.latitude,
+            "longitude": body.longitude,
+            "gps_accuracy_m": body.gps_accuracy_m
+        }
+
+    client_event_id = body.client_event_id or f"telemetry-{uuid.uuid4()}"
     doc = {
         "user_id": user["id"],
+        "client_event_id": client_event_id,
         "acceleration": {"x": body.acceleration_x, "y": body.acceleration_y, "z": body.acceleration_z},
         "gyroscope": {"x": body.gyroscope_x, "y": body.gyroscope_y, "z": body.gyroscope_z},
         "g_force": body.g_force,
+        "helmet_connected": body.helmet_connected,
         "timestamp": datetime.now(timezone.utc).isoformat()
     }
-    await db.telemetry.insert_one(doc)
-    return {"status": "ok", "g_force": body.g_force, "severity": classify_severity(body.g_force)}
+    try:
+        await db.telemetry.insert_one(doc)
+    except DuplicateKeyError:
+        return {
+            "status": "duplicate_ignored",
+            "g_force": body.g_force,
+            "severity": classify_severity(body.g_force),
+            "location_tracking_enabled": track_location
+        }
+    if location:
+        latest_live = await db.user_live_locations.find_one({"user_id": user["id"]}, {"_id": 0})
+        await db.user_live_locations.update_one(
+            {"user_id": user["id"]},
+            {"$set": {
+                "user_id": user["id"],
+                "location": location,
+                "helmet_connected": body.helmet_connected,
+                "g_force": body.g_force,
+                "timestamp": doc["timestamp"]
+            }},
+            upsert=True
+        )
+
+        # Guardar historial ligero solo si hay cambio relevante (anti-saturación).
+        should_store_history = False
+        if not latest_live or not latest_live.get("location"):
+            should_store_history = True
+        else:
+            prev = latest_live["location"]
+            prev_lat = prev.get("latitude")
+            prev_lon = prev.get("longitude")
+            curr_lat = location.get("latitude")
+            curr_lon = location.get("longitude")
+            if prev_lat is not None and prev_lon is not None and curr_lat is not None and curr_lon is not None:
+                r = 6371000.0
+                dlat = radians(curr_lat - prev_lat)
+                dlon = radians(curr_lon - prev_lon)
+                a = sin(dlat / 2) ** 2 + cos(radians(prev_lat)) * cos(radians(curr_lat)) * sin(dlon / 2) ** 2
+                c = 2 * atan2(sqrt(a), sqrt(1 - a))
+                distance_m = r * c
+                should_store_history = distance_m >= 25
+
+                prev_ts_raw = latest_live.get("timestamp")
+                if prev_ts_raw:
+                    try:
+                        prev_ts = datetime.fromisoformat(prev_ts_raw)
+                        now_ts = datetime.fromisoformat(doc["timestamp"])
+                        elapsed_seconds = (now_ts - prev_ts).total_seconds()
+                        if elapsed_seconds >= 60:
+                            should_store_history = True
+                    except Exception:
+                        pass
+
+        if should_store_history:
+            await db.location_history.insert_one({
+                "user_id": user["id"],
+                "location": location,
+                "helmet_connected": body.helmet_connected,
+                "g_force": body.g_force,
+                "timestamp": doc["timestamp"]
+            })
+    return {"status": "ok", "g_force": body.g_force, "severity": classify_severity(body.g_force), "location_tracking_enabled": track_location}
+
+@api_router.get("/tracking/live")
+async def get_live_tracking(user: dict = Depends(get_current_user)):
+    latest = await db.user_live_locations.find_one({"user_id": user["id"]}, {"_id": 0})
+    if latest:
+        return latest
+    telemetry = await db.telemetry.find_one({"user_id": user["id"], "location": {"$ne": None}}, {"_id": 0}, sort=[("timestamp", -1)])
+    if telemetry:
+        return {
+            "user_id": user["id"],
+            "location": telemetry.get("location"),
+            "helmet_connected": telemetry.get("helmet_connected"),
+            "g_force": telemetry.get("g_force"),
+            "timestamp": telemetry.get("timestamp")
+        }
+    return {"user_id": user["id"], "location": None, "helmet_connected": False, "g_force": None, "timestamp": None}
 
 # ─── AI Diagnosis (Gemini 2.5 Flash) ───
 
@@ -795,6 +893,9 @@ async def startup():
     await db.emergency_contacts.create_index("user_id")
     await db.impact_events.create_index("user_id")
     await db.telemetry.create_index("user_id")
+    await db.location_history.create_index("user_id")
+    await db.location_history.create_index("timestamp", expireAfterSeconds=86400)
+    await db.user_live_locations.create_index("user_id", unique=True)
     await db.user_profiles.create_index("user_id")
     await db.user_settings.create_index("user_id")
     # Seed admin

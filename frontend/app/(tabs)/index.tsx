@@ -10,7 +10,7 @@ import { COLORS, RADIUS, SPACING, severityColor, severityLabel } from '../../src
 import { useAuth } from '../../src/context/AuthContext';
 import { useBluetooth } from '../../src/context/BluetoothContext';
 import { useAppSettings } from '../../src/context/AppSettingsContext';
-import { contactsAPI, impactsAPI, settingsAPI } from '../../src/services/api';
+import { contactsAPI, impactsAPI, settingsAPI, telemetryAPI } from '../../src/services/api';
 
 const MAX_G_RING = 12;
 const SEGMENTS = 40;
@@ -42,6 +42,8 @@ export default function DashboardScreen() {
   const [countdownSeconds, setCountdownSeconds] = useState(8);
   const [alertThreshold, setAlertThreshold] = useState(5);
   const [hasEmergencyContacts, setHasEmergencyContacts] = useState(true);
+  const [locationTrackingEnabled, setLocationTrackingEnabled] = useState(true);
+  const lastTelemetrySentAtRef = useRef(0);
 
   useEffect(() => {
     if (!telemetry) return;
@@ -64,6 +66,7 @@ export default function DashboardScreen() {
         }
         const threshold = Number(s?.alert_threshold ?? 5);
         if (!Number.isNaN(threshold) && threshold > 0) setAlertThreshold(threshold);
+        setLocationTrackingEnabled(s?.location_tracking_enabled !== false);
       } catch (e) {
         console.warn('No se pudo cargar countdown de usuario', e);
       }
@@ -106,6 +109,50 @@ export default function DashboardScreen() {
   const sevLabel = severityLabel(gForce);
   const liveData = connected && !staleData && !!telemetryForDisplay;
   const highImpact = liveData && gForce >= alertThreshold;
+
+  useEffect(() => {
+    const pushRealtimeTelemetry = async () => {
+      if (!token || !connected || !telemetry || staleData) return;
+      const now = Date.now();
+      if (now - lastTelemetrySentAtRef.current < 10000) return;
+      lastTelemetrySentAtRef.current = now;
+      let latitude: number | undefined;
+      let longitude: number | undefined;
+      let gpsAccuracyM: number | undefined;
+      if (locationTrackingEnabled) {
+        try {
+          const { status } = await Location.requestForegroundPermissionsAsync();
+          if (status === 'granted') {
+            const pos = await Location.getCurrentPositionAsync({});
+            latitude = pos.coords.latitude;
+            longitude = pos.coords.longitude;
+            gpsAccuracyM = pos.coords.accuracy ?? undefined;
+          }
+        } catch (e) {
+          console.warn('No se pudo capturar ubicación en telemetría', e);
+        }
+      }
+      try {
+        await telemetryAPI.send(token, {
+          acceleration_x: telemetry.acceleration_x,
+          acceleration_y: telemetry.acceleration_y,
+          acceleration_z: telemetry.acceleration_z,
+          gyroscope_x: telemetry.gyroscope_x,
+          gyroscope_y: telemetry.gyroscope_y,
+          gyroscope_z: telemetry.gyroscope_z,
+          g_force: telemetry.g_force,
+          latitude,
+          longitude,
+          gps_accuracy_m: gpsAccuracyM,
+          helmet_connected: connected,
+          client_event_id: `telemetry-${now}`,
+        });
+      } catch (e) {
+        console.warn('No se pudo enviar telemetría en tiempo real', e);
+      }
+    };
+    pushRealtimeTelemetry();
+  }, [token, connected, telemetry, staleData, locationTrackingEnabled]);
 
   useEffect(() => {
     if (highImpact && countdown === null && !sending && !impactTriggeredRef.current) {
