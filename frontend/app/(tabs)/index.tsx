@@ -1,11 +1,12 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react';
 import {
-  View, Text, TouchableOpacity, StyleSheet, ScrollView, RefreshControl, Modal, Alert,
+  View, Text, TouchableOpacity, StyleSheet, ScrollView, RefreshControl, Modal, Alert, Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import * as Location from 'expo-location';
+import * as Notifications from 'expo-notifications';
 import { COLORS, RADIUS, SPACING, severityColor, severityLabel } from '../../src/theme';
 import { useAuth } from '../../src/context/AuthContext';
 import { useBluetooth } from '../../src/context/BluetoothContext';
@@ -14,6 +15,21 @@ import { contactsAPI, impactsAPI, settingsAPI, telemetryAPI } from '../../src/se
 
 const MAX_G_RING = 12;
 const SEGMENTS = 40;
+
+const ANDROID_ALERT_CHANNEL_ID = 'crash-alerts';
+const NOTIFICATION_TELEMETRY_THROTTLE_MS = 12000;
+const NOTIFICATION_COUNTDOWN_ID = 'crash-countdown';
+const NOTIFICATION_STATUS_ID = 'crash-status';
+const ACTION_CANCEL_COUNTDOWN = 'CANCEL_COUNTDOWN';
+
+Notifications.setNotificationHandler({
+  handleNotification: async () => ({
+    shouldShowBanner: true,
+    shouldShowList: true,
+    shouldPlaySound: false,
+    shouldSetBadge: false,
+  }),
+});
 
 export default function DashboardScreen() {
   const { user } = useAuth();
@@ -45,6 +61,8 @@ export default function DashboardScreen() {
   const [hasEmergencyContacts, setHasEmergencyContacts] = useState(true);
   const [locationTrackingEnabled, setLocationTrackingEnabled] = useState(true);
   const lastTelemetrySentAtRef = useRef(0);
+  const lastNotificationUpdateRef = useRef(0);
+  const countdownIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
     if (!telemetry) return;
@@ -285,6 +303,89 @@ export default function DashboardScreen() {
   }, [token, sending, hasEmergencyContacts, router, alertThreshold]);
 
 
+  useEffect(() => {
+    const setupNotificationChannel = async () => {
+      if (Platform.OS !== 'android') return;
+      await Notifications.setNotificationChannelAsync(ANDROID_ALERT_CHANNEL_ID, {
+        name: 'C.R.A.S.H. Monitoreo',
+        importance: Notifications.AndroidImportance.HIGH,
+        lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
+      });
+    };
+    setupNotificationChannel();
+  }, []);
+
+  useEffect(() => {
+    const sub = Notifications.addNotificationResponseReceivedListener((response) => {
+      const actionId = response.actionIdentifier;
+      if (actionId === ACTION_CANCEL_COUNTDOWN) {
+        setCountdown(null);
+        impactTriggeredRef.current = false;
+      }
+    });
+    return () => sub.remove();
+  }, []);
+
+  useEffect(() => {
+    const pushStatusNotification = async () => {
+      if (Platform.OS !== 'android' || !connected) {
+        await Notifications.dismissNotificationAsync(NOTIFICATION_STATUS_ID).catch(() => {});
+        return;
+      }
+      const now = Date.now();
+      if (now - lastNotificationUpdateRef.current < NOTIFICATION_TELEMETRY_THROTTLE_MS) return;
+      lastNotificationUpdateRef.current = now;
+      const lat = telemetryForDisplay?.latitude;
+      const lon = telemetryForDisplay?.longitude;
+      const gText = `${(telemetryForDisplay?.g_force ?? 0).toFixed(2)}G`;
+      const body = `Activo · ${lat?.toFixed(5) ?? '--'}, ${lon?.toFixed(5) ?? '--'} · ${gText}`;
+      await Notifications.scheduleNotificationAsync({
+        identifier: NOTIFICATION_STATUS_ID,
+        content: { title: 'C.R.A.S.H. monitoreo activo', body, sticky: true, priority: Notifications.AndroidNotificationPriority.HIGH },
+        trigger: null,
+      });
+    };
+    pushStatusNotification();
+  }, [connected, telemetryForDisplay]);
+
+  useEffect(() => {
+    const updateCountdownNotification = async () => {
+      if (Platform.OS !== 'android') return;
+      if (countdown === null) {
+        if (countdownIntervalRef.current) clearInterval(countdownIntervalRef.current);
+        countdownIntervalRef.current = null;
+        await Notifications.dismissNotificationAsync(NOTIFICATION_COUNTDOWN_ID).catch(() => {});
+        return;
+      }
+      await Notifications.setNotificationCategoryAsync('crash-actions', [
+        { identifier: ACTION_CANCEL_COUNTDOWN, buttonTitle: 'Cancelar alerta', options: { opensAppToForeground: false } },
+      ]);
+
+      if (countdownIntervalRef.current) clearInterval(countdownIntervalRef.current);
+      const publish = async () => {
+        await Notifications.scheduleNotificationAsync({
+          identifier: NOTIFICATION_COUNTDOWN_ID,
+          content: {
+            title: 'Impacto detectado',
+            body: `Envío en ${countdown}s · G ${(impactTelemetryRef.current?.g_force ?? gForce).toFixed(2)}`,
+            categoryIdentifier: 'crash-actions',
+            sticky: true,
+            priority: Notifications.AndroidNotificationPriority.MAX,
+          },
+          trigger: null,
+        });
+      };
+      await publish();
+      countdownIntervalRef.current = setInterval(publish, 1000);
+    };
+    updateCountdownNotification();
+    return () => {
+      if (countdownIntervalRef.current) clearInterval(countdownIntervalRef.current);
+    };
+  }, [countdown, gForce]);
+
+
+
 
 
   return (
@@ -345,7 +446,11 @@ export default function DashboardScreen() {
           <CoordItem label="Y" value={telemetryForDisplay?.acceleration_y} live={liveData} />
           <CoordItem label="Z" value={telemetryForDisplay?.acceleration_z} live={liveData} />
         </View>
-        <Text style={styles.coordsGeo}>Lat: 19.4326 · Lon: -99.1332</Text>
+        <Text style={styles.coordsGeo}>
+          {locationTrackingEnabled && telemetryForDisplay
+            ? `Lat: ${telemetryForDisplay.latitude?.toFixed(5) ?? '--'} · Lon: ${telemetryForDisplay.longitude?.toFixed(5) ?? '--'}`
+            : 'Ubicación no disponible'}
+        </Text>
       </View>
 
         <View style={styles.sectionHead}>

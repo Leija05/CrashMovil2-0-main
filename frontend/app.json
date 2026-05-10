@@ -15,7 +15,9 @@
         "NSLocationWhenInUseUsageDescription": "Share your GPS location during emergencies",
         "NSBluetoothAlwaysUsageDescription": "Connect to your smart helmet sensor",
         "NSBluetoothPeripheralUsageDescription": "Receive telemetry from your smart helmet",
-        "UIBackgroundModes": ["bluetooth-central"]
+        "UIBackgroundModes": [
+          "bluetooth-central"
+        ]
       }
     },
     "android": {
@@ -50,7 +52,8 @@
           "resizeMode": "contain",
           "backgroundColor": "#000"
         }
-      ]
+      ],
+      "expo-notifications"
     ],
     "experiments": {
       "typedRoutes": true
